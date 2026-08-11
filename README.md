@@ -75,9 +75,30 @@ asks for `N + 15` candidates, validates and source-checks them, and saves the fi
 usable results. If fewer candidates pass validation, the valid subset is saved without a
 second LLM request.
 
-Subtitle text is reduced to complete dialogue units containing likely B2-C2 vocabulary
-and cached on the user's movie record. Subsequent generations for the same movie reuse
-that filtered source instead of downloading the subtitle again.
+### Token Strategy
+
+The largest avoidable input cost is normally the full subtitle file. Filmocabulary reduces
+that cost before generation:
+
+1. It checks the current user's movie cache before calling OpenSubtitles.
+2. It parses subtitles into complete dialogue units, preserving sentence context.
+3. It keeps units containing locally recognized B2-C2 terms and ranks them within
+   configurable limits: `1,100` words and `6,000` characters by default.
+4. It caches the filtered text on the movie and reuses that bounded source for later
+   generations.
+
+The filter removes timestamps and elementary-only dialogue without stripping individual
+words from retained sentences, so phrasal verbs, idioms, and surrounding context remain
+intact. A versioned negative cache also avoids repeating subtitle work when no suitable
+advanced source text is found.
+
+For Fireworks, reasoning is disabled and the completion allowance scales with the candidate
+count (`512 + 160` tokens per requested candidate). Usage logs record prompt, completion,
+total, and candidate-yield counts without logging subtitle or response content.
+
+Together, these measures reduce repeated downloads and unnecessary input and output tokens.
+Actual usage still varies by movie, provider, requested entry count, and cache availability,
+so the application does not promise a fixed token count or percentage reduction.
 
 ## Tests
 
