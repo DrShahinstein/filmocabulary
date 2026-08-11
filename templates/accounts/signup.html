@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Create account | Filmocabulary{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<div class="auth-layout">
+    <section class="auth-panel" aria-labelledby="signup-title">
+        <div class="auth-panel__heading">
+            <span class="auth-panel__icon" aria-hidden="true"><i data-lucide="user-plus"></i></span>
+            <div>
+                <p class="eyebrow">Your film library</p>
+                <h1 id="signup-title">Create account</h1>
+            </div>
+        </div>
+
+        {% if form.non_field_errors %}
+            <div class="form-alert" role="alert">
+                <i data-lucide="circle-alert" aria-hidden="true"></i>
+                <div>{{ form.non_field_errors }}</div>
+            </div>
+        {% endif %}
+
+        <form method="post" class="stack-form" novalidate>
+            {% csrf_token %}
+            {% for hidden_field in form.hidden_fields %}{{ hidden_field }}{% endfor %}
+
+            {% for field in form.visible_fields %}
+                <div class="form-field{% if field.errors %} has-error{% endif %}">
+                    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.help_text %}<div class="help-text" id="{{ field.auto_id }}_helptext">{{ field.help_text|safe }}</div>{% endif %}
+                    {% for error in field.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
+                </div>
+            {% endfor %}
+
+            <button class="button button--primary button--full" type="submit">
+                <i data-lucide="user-plus" aria-hidden="true"></i>
+                <span>Create account</span>
+            </button>
+        </form>
+
+        <p class="auth-panel__switch">Already have an account? <a href="{% url 'login' %}">Sign in</a></p>
+    </section>
+</div>
+{% endblock %}

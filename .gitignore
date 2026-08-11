@@ -1,0 +1,46 @@
+# Local configuration and credentials
+.env
+.env.local
+.env.*.local
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Virtual environments and local package caches
+.cpython/
+.venv/
+venv/
+env/
+.tox/
+.nox/
+.pip-cache/
+
+# Python caches, coverage, and build output
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local state and generated assets
+*.sqlite3
+staticfiles/
+media/
+*.log
+
+# IDE and operating-system metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

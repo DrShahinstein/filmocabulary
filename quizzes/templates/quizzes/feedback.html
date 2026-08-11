@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Quiz feedback | Filmocabulary{% endblock %}
+{% block body_class %}quiz-page{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="page-kicker">Practice</p>
+    <h1>Movie vocabulary quiz</h1>
+  </div>
+</header>
+
+<section id="quiz-launch-region" class="quiz-workspace" aria-live="polite">
+  {% include "partials/quiz_feedback.html" %}
+</section>
+{% endblock %}
+

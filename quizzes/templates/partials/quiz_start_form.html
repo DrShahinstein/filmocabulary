@@ -1,0 +1,60 @@
+<div class="quiz-setup">
+  <div class="quiz-setup__header">
+    <p class="page-kicker">Quiz setup</p>
+    <h2>Select your movies</h2>
+  </div>
+
+  <form
+    class="quiz-form"
+    method="post"
+    action="{% url 'quizzes:start' %}"
+    hx-post="{% url 'quizzes:start' %}"
+    hx-target="#quiz-launch-region"
+    hx-swap="innerHTML"
+    hx-indicator="#htmx-indicator"
+    hx-disabled-elt="find button[type='submit']"
+    hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+    data-selection-form
+  >
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="form-errors" role="alert">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    <fieldset class="form-field form-field--movies">
+      <legend class="field-label-row">
+        <span>{{ form.movies.label }}</span>
+        <span class="selection-count" data-selection-count>0 selected</span>
+      </legend>
+      {% if form.movies.field.queryset.exists %}
+        <div class="quiz-movie-options">{{ form.movies }}</div>
+      {% else %}
+        <div class="empty-state empty-state--compact">
+          <p>Your saved movies will appear here.</p>
+          <a class="button button--secondary" href="{% url 'movies:dashboard' %}">Open movie library</a>
+        </div>
+      {% endif %}
+      {% if form.movies.errors %}
+        <div class="field-errors" role="alert">{{ form.movies.errors }}</div>
+      {% endif %}
+    </fieldset>
+
+    <div class="form-field form-field--number">
+      <label for="{{ form.question_count.id_for_label }}">{{ form.question_count.label }}</label>
+      {{ form.question_count }}
+      {% if form.question_count.errors %}
+        <div class="field-errors" role="alert">{{ form.question_count.errors }}</div>
+      {% endif %}
+    </div>
+
+    <button
+      class="button button--primary"
+      type="submit"
+      {% if not form.movies.field.queryset.exists %}disabled{% endif %}
+    >
+      <i data-lucide="play" aria-hidden="true"></i>
+      <span>Start quiz</span>
+    </button>
+  </form>
+</div>

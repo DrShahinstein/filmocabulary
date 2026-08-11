@@ -1,0 +1,28 @@
+<div class="message message--success" role="status">
+  <i data-lucide="circle-check" aria-hidden="true"></i>
+  <div class="message__content">
+    <strong>{{ movie.title }} is ready.</strong>
+    <span>
+      {{ created_count }} new entr{{ created_count|pluralize:"y,ies" }} saved{% if skipped_count %};
+      {{ skipped_count }} existing entr{{ skipped_count|pluralize:"y,ies" }} skipped{% endif %}.
+    </span>
+    {% if source_note %}<span>{{ source_note }}</span>{% endif %}
+    <a class="message__action" href="{% url 'vocabulary:movie_detail' movie.pk %}">Open vocabulary</a>
+  </div>
+</div>
+
+<div class="vocabulary-generation-preview">
+  {% include "partials/vocabulary_movie_items.html" with movie=movie items=items csrf_token=csrf_token only %}
+</div>
+
+<div id="movie-library" class="movie-library" aria-live="polite" aria-busy="false" hx-swap-oob="outerHTML">
+  <div class="movie-grid">
+    {% for saved_movie in movies %}
+        {% include "partials/movie_card.html" with movie=saved_movie csrf_token=csrf_token only %}
+    {% endfor %}
+  </div>
+  <div class="filter-empty" data-filter-empty hidden>
+    <i data-lucide="search-x" aria-hidden="true"></i>
+    <p>No matching films.</p>
+  </div>
+</div>

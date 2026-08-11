@@ -1,0 +1,122 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#163f3a">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>{% block title %}Filmocabulary{% endblock %}</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="stylesheet" href="{% static 'css/app.css' %}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}"
+      hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+      hx-indicator="#htmx-indicator">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <div id="htmx-indicator" class="request-indicator htmx-indicator" role="status" aria-live="polite">
+        <span class="request-indicator__bar" aria-hidden="true"></span>
+        <span class="visually-hidden">Loading</span>
+    </div>
+
+    <div id="app-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+    <div class="app-shell">
+        <header class="app-header">
+            <div class="app-header__inner">
+                <a class="brand" href="{% if user.is_authenticated %}{% url 'movies:dashboard' %}{% else %}{% url 'login' %}{% endif %}" aria-label="Filmocabulary home">
+                    <span class="brand__mark" aria-hidden="true">
+                        <i data-lucide="captions"></i>
+                    </span>
+                    <span class="brand__name">Filmocabulary</span>
+                </a>
+
+                {% if user.is_authenticated %}
+                    <nav class="primary-nav" aria-label="Primary navigation">
+                        <a class="primary-nav__link{% if request.resolver_match.namespace == 'movies' or request.resolver_match.namespace == 'vocabulary' %} is-active{% endif %}"
+                           href="{% url 'movies:dashboard' %}"
+                           {% if request.resolver_match.namespace == 'movies' or request.resolver_match.namespace == 'vocabulary' %}aria-current="page"{% endif %}>
+                            <i data-lucide="library-big" aria-hidden="true"></i>
+                            <span>Library</span>
+                        </a>
+                        <a class="primary-nav__link{% if request.resolver_match.namespace == 'quizzes' %} is-active{% endif %}"
+                           href="{% url 'quizzes:history' %}"
+                           {% if request.resolver_match.namespace == 'quizzes' %}aria-current="page"{% endif %}>
+                            <i data-lucide="chart-no-axes-combined" aria-hidden="true"></i>
+                            <span>Quiz history</span>
+                        </a>
+                    </nav>
+
+                    <div class="account-menu">
+                        <span class="account-menu__avatar" aria-hidden="true">{{ user.get_username|first|upper }}</span>
+                        <span class="account-menu__name">{{ user.get_short_name|default:user.get_username }}</span>
+                        <form method="post" action="{% url 'logout' %}" class="account-menu__logout">
+                            {% csrf_token %}
+                            <button class="icon-button icon-button--quiet" type="submit" aria-label="Sign out" title="Sign out">
+                                <i data-lucide="log-out" aria-hidden="true"></i>
+                            </button>
+                        </form>
+                    </div>
+                {% else %}
+                    <nav class="guest-nav" aria-label="Account navigation">
+                        <a class="button button--quiet" href="{% url 'login' %}">Sign in</a>
+                        <a class="button button--primary button--small" href="{% url 'accounts:signup' %}">Create account</a>
+                    </nav>
+                {% endif %}
+            </div>
+        </header>
+
+        {% if messages %}
+            <div class="message-region app-container" aria-label="Notifications">
+                {% for message in messages %}
+                    <div class="message message--{{ message.tags|default:'info' }}" role="{% if message.tags == 'error' %}alert{% else %}status{% endif %}">
+                        <i data-lucide="{% if message.tags == 'success' %}circle-check{% elif message.tags == 'error' %}circle-alert{% elif message.tags == 'warning' %}triangle-alert{% else %}info{% endif %}" aria-hidden="true"></i>
+                        <span class="message__text">{{ message }}</span>
+                        <button class="message__dismiss icon-button icon-button--quiet" type="button" aria-label="Dismiss notification" title="Dismiss">
+                            <i data-lucide="x" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <main id="main-content" class="app-main" tabindex="-1">
+            <div class="app-container">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+
+        {% if user.is_authenticated %}
+            <nav class="mobile-nav" aria-label="Mobile navigation">
+                <a class="mobile-nav__link{% if request.resolver_match.namespace == 'movies' or request.resolver_match.namespace == 'vocabulary' %} is-active{% endif %}"
+                   href="{% url 'movies:dashboard' %}"
+                   {% if request.resolver_match.namespace == 'movies' or request.resolver_match.namespace == 'vocabulary' %}aria-current="page"{% endif %}>
+                    <i data-lucide="library-big" aria-hidden="true"></i>
+                    <span>Library</span>
+                </a>
+                <a class="mobile-nav__link{% if request.resolver_match.namespace == 'quizzes' %} is-active{% endif %}"
+                   href="{% url 'quizzes:history' %}"
+                   {% if request.resolver_match.namespace == 'quizzes' %}aria-current="page"{% endif %}>
+                    <i data-lucide="chart-no-axes-combined" aria-hidden="true"></i>
+                    <span>History</span>
+                </a>
+                <form method="post" action="{% url 'logout' %}" class="mobile-nav__form">
+                    {% csrf_token %}
+                    <button class="mobile-nav__link" type="submit">
+                        <i data-lucide="log-out" aria-hidden="true"></i>
+                        <span>Sign out</span>
+                    </button>
+                </form>
+            </nav>
+        {% endif %}
+    </div>
+
+    <script defer src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script defer src="{% static 'js/app.js' %}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

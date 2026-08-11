@@ -1,0 +1,32 @@
+<section id="movie-vocabulary-{{ movie.pk }}" class="vocabulary-sheet" aria-labelledby="movie-vocabulary-title-{{ movie.pk }}">
+  {% if not hide_sheet_header %}<header class="vocabulary-sheet__header">
+    <div>
+      <p class="page-kicker">Saved vocabulary</p>
+      <h3 id="movie-vocabulary-title-{{ movie.pk }}">
+      {{ movie.title }}{% if movie.release_year %} ({{ movie.release_year }}){% endif %}
+      </h3>
+    </div>
+    <span class="vocabulary-sheet__count">{{ items|length }} entr{{ items|length|pluralize:"y,ies" }}</span>
+  </header>{% endif %}
+
+  {% if created_count is not None and not hide_generation_status %}
+    <p class="inline-status" role="status">
+      <i data-lucide="circle-check" aria-hidden="true"></i>
+      <span>
+      {{ created_count }} new entr{{ created_count|pluralize:"y,ies" }} saved{% if skipped_count %};
+      {{ skipped_count }} existing entr{{ skipped_count|pluralize:"y,ies" }} skipped{% endif %}.
+      </span>
+    </p>
+  {% endif %}
+
+  <ul class="vocabulary-items">
+    {% for item in items %}
+      {% include "partials/vocabulary_item.html" %}
+    {% empty %}
+      <li class="vocabulary-items__empty">
+        <i data-lucide="captions-off" aria-hidden="true"></i>
+        <p>No vocabulary has been generated for this film.</p>
+      </li>
+    {% endfor %}
+  </ul>
+</section>

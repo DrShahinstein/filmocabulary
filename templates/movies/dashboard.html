@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Library | Filmocabulary{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}
+
+{% block content %}
+<div class="dashboard-workspace">
+    <header class="page-heading page-heading--dashboard">
+        <div>
+            <p class="eyebrow">{{ user.first_name|default:user.username }}'s workspace</p>
+            <h1>Film vocabulary library</h1>
+        </div>
+        <div class="library-count" aria-label="{{ movies|length }} saved film{{ movies|length|pluralize }}">
+            <span class="library-count__value">{{ movies|length }}</span>
+            <span class="library-count__label">saved film{{ movies|length|pluralize }}</span>
+        </div>
+    </header>
+
+    <section class="tool-panel generation-panel" aria-labelledby="generation-title">
+        <div class="tool-panel__heading">
+            <span class="tool-panel__icon tool-panel__icon--coral" aria-hidden="true"><i data-lucide="sparkles"></i></span>
+            <div>
+                <p class="eyebrow">Vocabulary source</p>
+                <h2 id="generation-title">Add a film</h2>
+            </div>
+        </div>
+
+        <form id="generation-form"
+              class="generation-form"
+              method="post"
+              enctype="multipart/form-data"
+              action="{% url 'vocabulary:generate' %}"
+              hx-post="{% url 'vocabulary:generate' %}"
+              hx-encoding="multipart/form-data"
+              hx-target="#generation-result"
+              hx-swap="innerHTML"
+              hx-sync="this:replace"
+              hx-disabled-elt="find button[type='submit']"
+              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+              novalidate>
+            {% csrf_token %}
+            {% for hidden_field in generation_form.hidden_fields %}{{ hidden_field }}{% endfor %}
+
+            <div class="generation-form__fields">
+                {% for field in generation_form.visible_fields %}
+                    <div class="form-field{% if field.name == 'source_file' %} form-field--source{% endif %}{% if field.errors %} has-error{% endif %}">
+                        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                        {{ field }}
+                        {% if field.help_text %}<div class="help-text" id="{{ field.auto_id }}_helptext">{{ field.help_text|safe }}</div>{% endif %}
+                        {% for error in field.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
+                    </div>
+                {% endfor %}
+            </div>
+
+            <button class="button button--primary generation-form__submit" type="submit">
+                <i data-lucide="wand-sparkles" aria-hidden="true"></i>
+                <span>Generate vocabulary</span>
+                <span class="button__spinner" aria-hidden="true"></span>
+            </button>
+        </form>
+
+        <div id="generation-result" class="generation-result" aria-live="polite" aria-atomic="true">
+            {% if generation_form.non_field_errors %}
+                <div class="form-alert" role="alert">
+                    <i data-lucide="circle-alert" aria-hidden="true"></i>
+                    <div>{{ generation_form.non_field_errors }}</div>
+                </div>
+            {% endif %}
+        </div>
+    </section>
+
+    <div class="dashboard-grid">
+        <section class="library-section" aria-labelledby="library-title">
+            <div class="section-heading section-heading--with-tools">
+                <div>
+                    <p class="eyebrow">Saved collection</p>
+                    <h2 id="library-title">Your films</h2>
+                </div>
+                <div class="search-control">
+                    <label class="visually-hidden" for="movie-filter">Filter films</label>
+                    <i data-lucide="search" aria-hidden="true"></i>
+                    <input id="movie-filter" type="search" placeholder="Filter films" autocomplete="off" data-movie-filter aria-controls="movie-library">
+                </div>
+            </div>
+
+            {% include "partials/movie_library.html" %}
+        </section>
+
+        <aside class="tool-panel quiz-panel" aria-labelledby="quiz-builder-title">
+            <div class="tool-panel__heading">
+                <span class="tool-panel__icon tool-panel__icon--gold" aria-hidden="true"><i data-lucide="puzzle"></i></span>
+                <div>
+                    <p class="eyebrow">Recall practice</p>
+                    <h2 id="quiz-builder-title">Build a quiz</h2>
+                </div>
+            </div>
+
+            <div id="quiz-launch-region"
+                 aria-live="polite"
+                 hx-get="{% url 'quizzes:builder' %}"
+                 hx-trigger="vocabularyChanged from:body"
+                 hx-swap="innerHTML">
+                {% include "partials/quiz_start_form.html" with form=quiz_form %}
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}

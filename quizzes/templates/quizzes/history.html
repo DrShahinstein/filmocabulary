@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Quiz history | Filmocabulary{% endblock %}
+{% block body_class %}quiz-history-page{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="page-kicker">Progress</p>
+    <h1>Quiz history</h1>
+  </div>
+  <a class="button button--primary" href="{% url 'quizzes:start' %}">
+    <i data-lucide="plus" aria-hidden="true"></i>
+    <span>New quiz</span>
+  </a>
+</header>
+
+{% if sessions %}
+  <div class="history-list">
+    {% for session in sessions %}
+      <article class="history-item">
+        <div class="history-item__main">
+          <div class="history-item__meta">
+            <time datetime="{{ session.created_at|date:'c' }}">
+              {{ session.created_at|date:"M j, Y" }}
+            </time>
+            <span class="status-badge status-badge--{{ session.status }}">
+              {% if session.completed_at %}Completed{% else %}In progress{% endif %}
+            </span>
+          </div>
+          <h2>
+            {% for movie in session.selected_movies.all %}
+              {{ movie.title }}{% if movie.release_year %} ({{ movie.release_year }}){% endif %}{% if not forloop.last %}, {% endif %}
+            {% empty %}
+              Movie vocabulary quiz
+            {% endfor %}
+          </h2>
+        </div>
+        <div class="history-item__score" aria-label="Score">
+          <strong>{{ session.correct_answers }}/{{ session.total_questions }}</strong>
+          <span>{{ session.score_percentage }}%</span>
+        </div>
+        {% if session.completed_at %}
+          <span class="history-item__complete" aria-hidden="true">
+            <i data-lucide="check" aria-hidden="true"></i>
+          </span>
+        {% else %}
+          <a class="button button--secondary" href="{% url 'quizzes:play' session.pk %}">
+            <i data-lucide="play" aria-hidden="true"></i>
+            <span>Continue</span>
+          </a>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+
+  {% if is_paginated %}
+    <nav class="pagination" aria-label="Quiz history pages">
+      {% if page_obj.has_previous %}
+        <a class="button button--secondary" href="?page={{ page_obj.previous_page_number }}">
+          <i data-lucide="chevron-left" aria-hidden="true"></i>
+          <span>Previous</span>
+        </a>
+      {% endif %}
+      <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="button button--secondary" href="?page={{ page_obj.next_page_number }}">
+          <span>Next</span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% else %}
+  <section class="empty-state">
+    <i data-lucide="list-checks" aria-hidden="true"></i>
+    <h2>No quizzes yet</h2>
+    <a class="button button--primary" href="{% url 'quizzes:start' %}">Start a quiz</a>
+  </section>
+{% endif %}
+{% endblock %}

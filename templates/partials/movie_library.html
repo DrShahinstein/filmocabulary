@@ -1,0 +1,22 @@
+<div id="movie-library" class="movie-library" aria-live="polite" aria-busy="false">
+    {% if movies %}
+        <div class="movie-grid">
+            {% for movie in movies %}
+      {% include "partials/movie_card.html" with movie=movie csrf_token=csrf_token only %}
+            {% endfor %}
+        </div>
+        <div class="filter-empty" data-filter-empty hidden>
+            <i data-lucide="search-x" aria-hidden="true"></i>
+            <p>No matching films.</p>
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <span class="empty-state__icon" aria-hidden="true"><i data-lucide="film"></i></span>
+            <h3>Your library is empty</h3>
+            <button class="button button--secondary" type="button" data-focus-target="#id_title, #id_movie_title">
+                <i data-lucide="plus" aria-hidden="true"></i>
+                <span>Add a film</span>
+            </button>
+        </div>
+    {% endif %}
+</div>

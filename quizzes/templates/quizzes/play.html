@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Quiz | Filmocabulary{% endblock %}
+{% block body_class %}quiz-page{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="page-kicker">Practice</p>
+    <h1>Movie vocabulary quiz</h1>
+  </div>
+  <a class="button button--secondary" href="{% url 'quizzes:history' %}">
+    <i data-lucide="history" aria-hidden="true"></i>
+    <span>History</span>
+  </a>
+</header>
+
+<section id="quiz-launch-region" class="quiz-workspace" aria-live="polite">
+  {% if is_complete %}
+    {% include "partials/quiz_complete.html" %}
+  {% else %}
+    {% include "partials/quiz_question.html" %}
+  {% endif %}
+</section>
+{% endblock %}
+

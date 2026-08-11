@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}{{ movie.title }} vocabulary | Filmocabulary{% endblock %}
+{% block body_class %}vocabulary-page{% endblock %}
+
+{% block content %}
+<div class="dashboard-workspace">
+  <header class="page-heading">
+    <div>
+      <p class="eyebrow">Saved vocabulary</p>
+      <h1>{{ movie.title }}{% if movie.release_year %} ({{ movie.release_year }}){% endif %}</h1>
+    </div>
+    <div class="page-heading__actions">
+      <span class="vocabulary-total">{{ items|length }} entr{{ items|length|pluralize:"y,ies" }}</span>
+      <a class="button button--secondary" href="{% url 'movies:dashboard' %}">
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+        <span>Back to library</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="tool-panel vocabulary-panel">
+    {% include "partials/vocabulary_movie_items.html" with hide_sheet_header=True %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% with vocabulary_count=movie.vocabulary_items.count %}
+<article class="movie-card" id="movie-{{ movie.pk }}" data-movie-card data-search-value="{{ movie.title|lower }} {{ movie.release_year|default:'' }}">
+    <div class="movie-card__poster" aria-hidden="true">
+        <span class="movie-card__monogram">{{ movie.title|first|upper }}</span>
+        <i data-lucide="clapperboard"></i>
+    </div>
+
+    <div class="movie-card__body">
+        <div class="movie-card__heading">
+            <div>
+                <h3 class="movie-card__title">
+                    <a href="{% url 'vocabulary:movie_detail' movie.pk %}">{{ movie.title }}</a>
+                </h3>
+                <p class="movie-card__year">{{ movie.release_year|default:"Release year not set" }}</p>
+            </div>
+            <span class="level-chip level-chip--mixed" title="Vocabulary levels">B2-C2</span>
+        </div>
+
+        <div class="movie-card__meta">
+            <span>
+                <i data-lucide="whole-word" aria-hidden="true"></i>
+                {{ vocabulary_count }} word{{ vocabulary_count|pluralize }}
+            </span>
+            <span>
+                <i data-lucide="calendar-plus" aria-hidden="true"></i>
+                {{ movie.created_at|date:"M j, Y" }}
+            </span>
+        </div>
+
+        <div class="movie-card__actions">
+            <a class="button button--secondary button--small movie-card__action" href="{% url 'vocabulary:movie_detail' movie.pk %}">
+                <span>Open vocabulary</span>
+                <i data-lucide="arrow-right" aria-hidden="true"></i>
+            </a>
+            <form class="movie-card__delete"
+                  method="post"
+                  action="{% url 'movies:delete' movie.pk %}"
+                  hx-post="{% url 'movies:delete' movie.pk %}"
+                  hx-target="#movie-library"
+                  hx-swap="outerHTML"
+                  hx-disabled-elt="find button"
+                  hx-confirm="Delete &quot;{{ movie.title }}&quot; and all of its vocabulary and related quiz history? This cannot be undone.">
+                {% csrf_token %}
+                <button class="icon-button icon-button--quiet"
+                        type="submit"
+                        title="Delete film"
+                        aria-label="Delete {{ movie.title }} from your library">
+                    <i data-lucide="trash-2" aria-hidden="true"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+</article>
+{% endwith %}
