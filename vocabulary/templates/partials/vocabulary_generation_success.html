@@ -6,6 +6,7 @@
       {{ created_count }} new entr{{ created_count|pluralize:"y,ies" }} saved{% if skipped_count %};
       {{ skipped_count }} existing entr{{ skipped_count|pluralize:"y,ies" }} skipped{% endif %}.
     </span>
+    {% if yield_message %}<span>{{ yield_message }}</span>{% endif %}
     {% if source_note %}<span>{{ source_note }}</span>{% endif %}
     <a class="message__action" href="{% url 'vocabulary:movie_detail' movie.pk %}">Open vocabulary</a>
   </div>

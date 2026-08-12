@@ -13,6 +13,7 @@ from quizzes.models import QuizAttempt, QuizSession
 from vocabulary.ingestion import SourceDocument
 from vocabulary.models import VocabularyItem
 from vocabulary.services import (
+    CandidateRejections,
     VocabularyGenerationResult,
     VocabularyProviderError,
 )
@@ -75,6 +76,109 @@ class VocabularyViewTests(TestCase):
         self.assertFalse(
             any("{% csrf_token %}" in str(warning.message) for warning in caught)
         )
+
+    @patch("vocabulary.views.generate_and_save_vocabulary")
+    def test_generation_reports_provider_shortfall_without_guessing_cause(
+        self, generate
+    ):
+        generate.return_value = VocabularyGenerationResult(
+            movie=self.movie,
+            created_count=77,
+            skipped_count=0,
+            movie_created=False,
+            requested_count=80,
+            provider_returned_count=77,
+            validated_candidate_count=77,
+        )
+
+        response = self.client.post(
+            reverse("vocabulary:generate"),
+            {"title": "Zodiac", "release_year": 2007, "item_count": 80},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertContains(response, "Saved 77 of 80 requested new entries.")
+        self.assertContains(
+            response,
+            "This generation run returned fewer candidates than requested.",
+        )
+        self.assertNotContains(response, "script was too short")
+
+    @patch("vocabulary.views.generate_and_save_vocabulary")
+    def test_generation_reports_filtered_candidates_as_shortfall_reason(
+        self, generate
+    ):
+        generate.return_value = VocabularyGenerationResult(
+            movie=self.movie,
+            created_count=77,
+            skipped_count=0,
+            movie_created=False,
+            requested_count=80,
+            provider_returned_count=80,
+            validated_candidate_count=77,
+            candidate_rejections=CandidateRejections(ungrounded=3),
+        )
+
+        response = self.client.post(
+            reverse("vocabulary:generate"),
+            {"title": "Zodiac", "release_year": 2007, "item_count": 80},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertContains(response, "Saved 77 of 80 requested new entries.")
+        self.assertContains(
+            response,
+            "3 generated candidates did not match the supplied source and were excluded.",
+        )
+        self.assertNotContains(response, "provider returned fewer candidates")
+
+    @patch("vocabulary.views.generate_and_save_vocabulary")
+    def test_generation_attributes_shortfall_to_already_saved_entries(
+        self, generate
+    ):
+        generate.return_value = VocabularyGenerationResult(
+            movie=self.movie,
+            created_count=77,
+            skipped_count=3,
+            movie_created=False,
+            requested_count=80,
+            provider_returned_count=95,
+            validated_candidate_count=80,
+            candidate_rejections=CandidateRejections(invalid_example=15),
+        )
+
+        response = self.client.post(
+            reverse("vocabulary:generate"),
+            {"title": "Zodiac", "release_year": 2007, "item_count": 80},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertContains(
+            response,
+            "3 qualifying entries were already saved and were not duplicated.",
+        )
+        self.assertNotContains(response, "valid quiz example")
+
+    @patch("vocabulary.views.generate_and_save_vocabulary")
+    def test_generation_keeps_standard_message_for_full_yield(self, generate):
+        generate.return_value = VocabularyGenerationResult(
+            movie=self.movie,
+            created_count=80,
+            skipped_count=0,
+            movie_created=False,
+            requested_count=80,
+            provider_returned_count=80,
+            validated_candidate_count=80,
+        )
+
+        response = self.client.post(
+            reverse("vocabulary:generate"),
+            {"title": "Zodiac", "release_year": 2007, "item_count": 80},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertContains(response, "80 new entries saved")
+        self.assertNotContains(response, "of 80 requested new entries")
 
     @patch("vocabulary.views.generate_and_save_vocabulary")
     def test_generation_forwards_uploaded_srt_as_source_document(self, generate):

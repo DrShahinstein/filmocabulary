@@ -13,13 +13,60 @@ from movies.models import Movie
 from .forms import GenerateVocabularyForm
 from .models import VocabularyItem
 from .services import (
+    VocabularyGenerationResult,
     VocabularyGenerationError,
+    VocabularyYieldReason,
     generate_and_save_vocabulary,
     prepare_vocabulary_source,
 )
 
 
 GENERATION_RATE = getattr(settings, "VOCABULARY_GENERATION_RATE", "5/h")
+
+
+def _counted(count: int, singular: str, plural: str | None = None) -> str:
+    noun = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {noun}"
+
+
+def _yield_message(result: VocabularyGenerationResult) -> str | None:
+    if not result.has_shortfall or result.requested_count is None:
+        return None
+
+    sentences = [
+        f"Saved {result.created_count} of {result.requested_count} requested new entries."
+    ]
+    reasons = set(result.yield_reasons)
+    if VocabularyYieldReason.PROVIDER_SHORTFALL in reasons:
+        sentences.append("This generation run returned fewer candidates than requested.")
+    if VocabularyYieldReason.GENERATED_DUPLICATE in reasons:
+        count = result.candidate_rejections.duplicate
+        sentences.append(
+            f"{_counted(count, 'generated candidate')} repeated another term and "
+            f"{'was' if count == 1 else 'were'} excluded."
+        )
+    if VocabularyYieldReason.UNGROUNDED in reasons:
+        count = result.candidate_rejections.ungrounded
+        sentences.append(
+            f"{_counted(count, 'generated candidate')} did not match the supplied source and "
+            f"{'was' if count == 1 else 'were'} excluded."
+        )
+    if VocabularyYieldReason.INVALID_EXAMPLE in reasons:
+        count = result.candidate_rejections.invalid_example
+        sentences.append(
+            f"{_counted(count, 'generated candidate')} could not form a valid quiz example and "
+            f"{'was' if count == 1 else 'were'} excluded."
+        )
+    if VocabularyYieldReason.ALREADY_SAVED in reasons:
+        sentences.append(
+            f"{_counted(result.skipped_count, 'qualifying entry', 'qualifying entries')} "
+            f"{'was' if result.skipped_count == 1 else 'were'} already saved and "
+            f"{'was' if result.skipped_count == 1 else 'were'} not duplicated."
+        )
+    if VocabularyYieldReason.OTHER in reasons:
+        sentences.append("This run produced fewer new qualifying entries than requested.")
+    sentences.append("Every qualifying entry from this run was saved.")
+    return " ".join(sentences)
 
 
 class VocabularyListView(LoginRequiredMixin, TemplateView):
@@ -124,6 +171,7 @@ def generate_vocabulary(request: HttpRequest) -> HttpResponse:
             "items": items,
             "created_count": result.created_count,
             "skipped_count": result.skipped_count,
+            "yield_message": _yield_message(result),
             "source_note": prepared_source.note,
             "movies": Movie.objects.filter(user=request.user).prefetch_related(
                 "vocabulary_items"

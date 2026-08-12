@@ -1,5 +1,6 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from django.conf import settings
@@ -68,14 +69,6 @@ class VocabularyPersistenceError(VocabularyGenerationError):
 
 
 @dataclass(frozen=True, slots=True)
-class VocabularyGenerationResult:
-    movie: Movie
-    created_count: int
-    skipped_count: int
-    movie_created: bool
-
-
-@dataclass(frozen=True, slots=True)
 class PreparedVocabularySource:
     source: SourceDocument | None
     movie: Movie | None
@@ -92,6 +85,71 @@ class CandidateRejections:
     @property
     def total(self) -> int:
         return self.duplicate + self.ungrounded + self.invalid_example
+
+
+class VocabularyYieldReason(StrEnum):
+    PROVIDER_SHORTFALL = "provider_shortfall"
+    GENERATED_DUPLICATE = "generated_duplicate"
+    UNGROUNDED = "ungrounded"
+    INVALID_EXAMPLE = "invalid_example"
+    ALREADY_SAVED = "already_saved"
+    OTHER = "other"
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateYield:
+    provider_returned_count: int
+    validated_candidate_count: int
+    rejections: CandidateRejections
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyGenerationResult:
+    movie: Movie
+    created_count: int
+    skipped_count: int
+    movie_created: bool
+    requested_count: int | None = None
+    provider_returned_count: int | None = None
+    validated_candidate_count: int | None = None
+    candidate_rejections: CandidateRejections = field(
+        default_factory=CandidateRejections
+    )
+
+    @property
+    def has_shortfall(self) -> bool:
+        return bool(
+            self.requested_count is not None
+            and self.created_count < self.requested_count
+        )
+
+    @property
+    def yield_reasons(self) -> tuple[VocabularyYieldReason, ...]:
+        if not self.has_shortfall or self.requested_count is None:
+            return ()
+
+        reasons: list[VocabularyYieldReason] = []
+        if (
+            self.provider_returned_count is not None
+            and self.provider_returned_count < self.requested_count
+        ):
+            reasons.append(VocabularyYieldReason.PROVIDER_SHORTFALL)
+        validation_caused_shortfall = (
+            self.validated_candidate_count is not None
+            and self.validated_candidate_count < self.requested_count
+        )
+        if validation_caused_shortfall:
+            if self.candidate_rejections.duplicate:
+                reasons.append(VocabularyYieldReason.GENERATED_DUPLICATE)
+            if self.candidate_rejections.ungrounded:
+                reasons.append(VocabularyYieldReason.UNGROUNDED)
+            if self.candidate_rejections.invalid_example:
+                reasons.append(VocabularyYieldReason.INVALID_EXAMPLE)
+        if self.skipped_count:
+            reasons.append(VocabularyYieldReason.ALREADY_SAVED)
+        if not reasons:
+            reasons.append(VocabularyYieldReason.OTHER)
+        return tuple(reasons)
 
 
 def _positive_filter_limit(setting_name: str, default: int) -> int:
@@ -433,7 +491,7 @@ def _request_payload(
     item_count: int,
     provider: VocabularyProvider,
     source: SourceDocument | None,
-) -> VocabularyExtractionResponse:
+) -> tuple[VocabularyExtractionResponse, CandidateYield]:
     candidate_count = item_count + GENERATION_CANDIDATE_SURPLUS
     first_payload = _request_candidates(
         movie=movie,
@@ -480,9 +538,16 @@ def _request_payload(
             "The generated vocabulary could not be validated. Please try again."
         )
 
-    return VocabularyExtractionResponse(
-        movie_title=movie.title,
-        items=accepted[:item_count],
+    return (
+        VocabularyExtractionResponse(
+            movie_title=movie.title,
+            items=accepted[:item_count],
+        ),
+        CandidateYield(
+            provider_returned_count=initial_returned,
+            validated_candidate_count=len(accepted[:item_count]),
+            rejections=initial_rejections,
+        ),
     )
 
 
@@ -490,6 +555,8 @@ def _persist_payload(
     *,
     movie: Movie,
     payload: VocabularyExtractionResponse,
+    requested_count: int,
+    candidate_yield: CandidateYield,
 ) -> VocabularyGenerationResult:
     with transaction.atomic():
         movie_created = False
@@ -568,6 +635,10 @@ def _persist_payload(
             created_count=len(pending),
             skipped_count=skipped_count,
             movie_created=movie_created,
+            requested_count=requested_count,
+            provider_returned_count=candidate_yield.provider_returned_count,
+            validated_candidate_count=candidate_yield.validated_candidate_count,
+            candidate_rejections=candidate_yield.rejections,
         )
 
 
@@ -618,7 +689,7 @@ def generate_and_save_vocabulary(
     except ProviderConfigurationError as exc:
         raise VocabularyConfigurationError(str(exc)) from exc
     try:
-        payload = _request_payload(
+        payload, candidate_yield = _request_payload(
             movie=generation_movie,
             item_count=item_count,
             provider=provider,
@@ -627,7 +698,12 @@ def generate_and_save_vocabulary(
     finally:
         provider.close()
     try:
-        return _persist_payload(movie=generation_movie, payload=payload)
+        return _persist_payload(
+            movie=generation_movie,
+            payload=payload,
+            requested_count=item_count,
+            candidate_yield=candidate_yield,
+        )
     except VocabularyGenerationError:
         raise
     except (DjangoValidationError, IntegrityError, Movie.DoesNotExist, ValueError) as exc:

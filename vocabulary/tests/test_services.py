@@ -16,6 +16,7 @@ from vocabulary.schemas import (
     VocabularyExtractionResponse,
 )
 from vocabulary.services import (
+    VocabularyYieldReason,
     VocabularyConfigurationError,
     VocabularyPersistenceError,
     VocabularyProviderError,
@@ -511,6 +512,17 @@ class VocabularyGenerationServiceTests(TestCase):
             )
 
         self.assertEqual(result.created_count, 50)
+        self.assertEqual(result.requested_count, 80)
+        self.assertEqual(result.provider_returned_count, 51)
+        self.assertEqual(result.validated_candidate_count, 50)
+        self.assertEqual(result.candidate_rejections.invalid_example, 1)
+        self.assertEqual(
+            result.yield_reasons,
+            (
+                VocabularyYieldReason.PROVIDER_SHORTFALL,
+                VocabularyYieldReason.INVALID_EXAMPLE,
+            ),
+        )
         self.assertEqual(VocabularyItem.objects.count(), 50)
         client.responses.parse.assert_called_once()
         yield_log = "\n".join(logs.output)
