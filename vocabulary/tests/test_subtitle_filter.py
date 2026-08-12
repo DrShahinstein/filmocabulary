@@ -11,6 +11,7 @@ from vocabulary.subtitle_filter import (
     filter_subtitle,
     filter_subtitle_document,
     filter_subtitle_text,
+    subtitle_filter_budget,
 )
 
 
@@ -38,6 +39,39 @@ class SubtitleVocabularyDatasetTests(SimpleTestCase):
 
 
 class SubtitleFilteringTests(SimpleTestCase):
+    def test_source_budget_scales_at_request_size_anchors(self):
+        expected = {
+            1: (733, 4_000),
+            30: (1_100, 6_000),
+            50: (1_467, 8_000),
+            100: (2_567, 14_000),
+        }
+
+        for item_count, limits in expected.items():
+            with self.subTest(item_count=item_count):
+                budget = subtitle_filter_budget(item_count)
+                self.assertEqual(
+                    (budget.max_words, budget.max_characters),
+                    limits,
+                )
+
+    def test_source_budget_scales_monotonically_between_anchors(self):
+        budgets = [
+            subtitle_filter_budget(item_count).max_characters
+            for item_count in range(1, 101)
+        ]
+
+        self.assertEqual(budgets, sorted(budgets))
+        self.assertLess(subtitle_filter_budget(10).max_characters, 6_000)
+        self.assertGreater(subtitle_filter_budget(75).max_characters, 8_000)
+
+    def test_source_budget_rejects_invalid_counts_and_baselines(self):
+        for item_count in (0, 101, True):
+            with self.subTest(item_count=item_count), self.assertRaises(ValueError):
+                subtitle_filter_budget(item_count)
+        with self.assertRaisesRegex(ValueError, "base_max_words"):
+            subtitle_filter_budget(10, base_max_words=0)
+
     def test_drops_elementary_units_and_keeps_advanced_unit_intact(self):
         source = (
             "Hello, I am here.\n"

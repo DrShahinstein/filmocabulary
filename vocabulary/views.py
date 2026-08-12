@@ -85,6 +85,7 @@ def generate_vocabulary(request: HttpRequest) -> HttpResponse:
         user=request.user,
         title=form.cleaned_data["title"],
         release_year=form.cleaned_data["release_year"],
+        item_count=form.cleaned_data["item_count"],
         uploaded_source=form.source_document,
     )
 

@@ -175,8 +175,8 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(request_kwargs["model"], "gemini-test-structured-model")
         self.assertIn('"movie_reference": "Zodiac (2007)"', request_kwargs["contents"])
         config = request_kwargs["config"]
-        self.assertIn("Ignore A1-A2 words completely.", config.system_instruction)
-        self.assertIn("B1 vocabulary only as a backfill tier", config.system_instruction)
+        self.assertIn("Strictly exclude: A1-A2 words", config.system_instruction)
+        self.assertIn("Secondary backfill: Use genuine B1 terms ONLY", config.system_instruction)
         self.assertEqual(config.response_mime_type, "application/json")
         item_schema = config.response_json_schema["$defs"]["VocabularyItemCandidate"]
         self.assertIn("CEFR_level", item_schema["properties"])
@@ -206,7 +206,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(request_kwargs["reasoning_effort"], "none")
         self.assertNotIn("extra_body", request_kwargs)
         self.assertIn(
-            "Ignore A1-A2 words completely.",
+            "Strictly exclude: A1-A2 words",
             request_kwargs["messages"][0]["content"],
         )
         self.assertIn(

@@ -5,6 +5,7 @@ from functools import lru_cache
 from importlib.resources import files
 from typing import Literal
 
+from .constants import MAX_GENERATION_ITEMS
 from .ingestion import SourceDocument
 
 
@@ -139,6 +140,12 @@ class SubtitleFilterConfigurationError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class SubtitleFilterBudget:
+    max_words: int
+    max_characters: int
+
+
+@dataclass(frozen=True, slots=True)
 class SubtitleFilterResult:
     text: str
     matched_terms: tuple[str, ...]
@@ -173,6 +180,50 @@ class _Candidate:
     utterance: _Utterance
     hits: tuple[tuple[str, CEFRLevel, bool], ...]
     word_count: int
+
+
+_BUDGET_SCALE_ANCHORS = (
+    (1, 2 / 3),
+    (30, 1.0),
+    (50, 4 / 3),
+    (MAX_GENERATION_ITEMS, 7 / 3),
+)
+
+
+def _budget_scale(item_count: int) -> float:
+    if (
+        not isinstance(item_count, int)
+        or isinstance(item_count, bool)
+        or not 1 <= item_count <= MAX_GENERATION_ITEMS
+    ):
+        raise ValueError(
+            f"item_count must be between 1 and {MAX_GENERATION_ITEMS}"
+        )
+
+    for (lower_count, lower_scale), (upper_count, upper_scale) in zip(
+        _BUDGET_SCALE_ANCHORS,
+        _BUDGET_SCALE_ANCHORS[1:],
+    ):
+        if item_count <= upper_count:
+            progress = (item_count - lower_count) / (upper_count - lower_count)
+            return lower_scale + progress * (upper_scale - lower_scale)
+    return _BUDGET_SCALE_ANCHORS[-1][1]
+
+
+def subtitle_filter_budget(
+    item_count: int,
+    *,
+    base_max_words: int = DEFAULT_MAX_WORDS,
+    base_max_characters: int = DEFAULT_MAX_CHARACTERS,
+) -> SubtitleFilterBudget:
+    """Scale the filtered-source envelope from the N=30 configured baseline."""
+    _validate_budget("base_max_words", base_max_words)
+    _validate_budget("base_max_characters", base_max_characters)
+    scale = _budget_scale(item_count)
+    return SubtitleFilterBudget(
+        max_words=max(1, round(base_max_words * scale)),
+        max_characters=max(1, round(base_max_characters * scale)),
+    )
 
 
 def _normalise_for_matching(value: str) -> str:

@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -8,6 +8,7 @@ from vocabulary.ingestion import SourceDocument
 from vocabulary.services import prepare_vocabulary_source
 from vocabulary.source_acquisition import AcquiredSource, SourceNotFoundError
 from vocabulary.source_cache import CURRENT_SUBTITLE_CACHE_VERSION
+from vocabulary.subtitle_filter import subtitle_filter_budget
 
 
 @override_settings(VOCABULARY_AUTO_SOURCE_PROVIDER="opensubtitles")
@@ -115,7 +116,12 @@ class PreparedVocabularySourceTests(TestCase):
             filename="zodiac.en.srt",
         )
         acquire_source.return_value = acquired
-        filter_source.return_value = filtered
+        bounded = SourceDocument(
+            text=filtered.text,
+            format="script",
+            pre_filtered=True,
+        )
+        filter_source.side_effect = [filtered, bounded]
 
         prepared = prepare_vocabulary_source(
             user=self.user,
@@ -128,7 +134,20 @@ class PreparedVocabularySourceTests(TestCase):
             release_year=2007,
             imdb_id="443706",
         )
-        filter_source.assert_called_once_with(acquired.document)
+        self.assertEqual(
+            filter_source.call_args_list,
+            [
+                call(acquired.document, item_count=100),
+                call(
+                    SourceDocument(
+                        text=filtered.text,
+                        format="script",
+                        pre_filtered=True,
+                    ),
+                    item_count=12,
+                ),
+            ],
+        )
         movie.refresh_from_db()
         self.assertEqual(
             movie.filtered_subtitle_text,
@@ -140,6 +159,59 @@ class PreparedVocabularySourceTests(TestCase):
         )
         self.assertEqual(prepared.movie, movie)
         self.assertEqual(prepared.source.text, movie.filtered_subtitle_text)
+
+    @patch("vocabulary.services.acquire_automatic_source")
+    def test_filtered_cache_serves_small_then_large_dynamic_requests(
+        self,
+        acquire_source,
+    ):
+        def letters(number):
+            output = ""
+            while True:
+                number, remainder = divmod(number, 26)
+                output = chr(97 + remainder) + output
+                if number == 0:
+                    return output
+                number -= 1
+
+        dialogue = "\n".join(
+            ["Hello, I am coming."]
+            + [
+                (
+                    f"Marker{letters(index)} requires investigators to scrutinize "
+                    "this deliberately extended and complicated piece of evidence."
+                )
+                for index in range(220)
+            ]
+        )
+        acquire_source.return_value = self.acquired_source(text=dialogue)
+
+        small = prepare_vocabulary_source(
+            user=self.user,
+            title="Zodiac",
+            release_year=2007,
+            item_count=10,
+        )
+        large = prepare_vocabulary_source(
+            user=self.user,
+            title="Zodiac",
+            release_year=2007,
+            item_count=100,
+        )
+
+        self.assertEqual(acquire_source.call_count, 1)
+        movie = Movie.objects.get(user=self.user, title="Zodiac")
+        self.assertLessEqual(
+            len(small.source.text),
+            subtitle_filter_budget(10).max_characters,
+        )
+        self.assertLessEqual(
+            len(large.source.text),
+            subtitle_filter_budget(100).max_characters,
+        )
+        self.assertGreater(len(large.source.text), len(small.source.text))
+        self.assertEqual(large.source.text, movie.filtered_subtitle_text)
+        self.assertNotIn("Hello, I am coming.", movie.filtered_subtitle_text)
 
     @patch("vocabulary.services._filter_source")
     @patch("vocabulary.services.acquire_automatic_source")

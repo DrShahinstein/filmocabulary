@@ -1,5 +1,5 @@
 import warnings
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -227,7 +227,12 @@ class VocabularyViewTests(TestCase):
             source_id="456",
             imdb_id="2543164",
         )
-        filter_source.return_value = filtered_source
+        bounded_source = SourceDocument(
+            text=filtered_source.text,
+            format="script",
+            pre_filtered=True,
+        )
+        filter_source.side_effect = [filtered_source, bounded_source]
         generate.side_effect = VocabularyProviderError(
             "Vocabulary generation is temporarily unavailable."
         )
@@ -254,7 +259,20 @@ class VocabularyViewTests(TestCase):
             release_year=2016,
             imdb_id=None,
         )
-        filter_source.assert_called_once_with(raw_source)
+        self.assertEqual(
+            filter_source.call_args_list,
+            [
+                call(raw_source, item_count=100),
+                call(
+                    SourceDocument(
+                        text=filtered_source.text,
+                        format="script",
+                        pre_filtered=True,
+                    ),
+                    item_count=10,
+                ),
+            ],
+        )
         generate.assert_called_once_with(
             movie=cached_movie,
             item_count=10,

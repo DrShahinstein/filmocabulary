@@ -9,8 +9,8 @@ from movies.models import Movie, current_year
 from .ingestion import SourceDocument
 
 
-# Bump this whenever subtitle_filter.FILTER_VERSION or its selection rules change.
-CURRENT_SUBTITLE_CACHE_VERSION = 2
+# Bump when filter rules or the meaning/size of the cached source envelope changes.
+CURRENT_SUBTITLE_CACHE_VERSION = 3
 MAX_SUBTITLE_CACHE_VERSION = 32767
 
 

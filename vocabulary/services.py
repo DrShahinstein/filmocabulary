@@ -38,6 +38,7 @@ from .subtitle_filter import (
     DEFAULT_MAX_WORDS,
     SubtitleFilterConfigurationError,
     filter_subtitle_document,
+    subtitle_filter_budget,
 )
 from .text import BlankSentenceError, derive_blank_sentence, validate_blank_sentence
 
@@ -102,18 +103,37 @@ def _positive_filter_limit(setting_name: str, default: int) -> int:
     return value
 
 
-def _filter_source(document: SourceDocument) -> SourceDocument:
-    return filter_subtitle_document(
-        document,
-        max_words=_positive_filter_limit(
+def _filter_source(
+    document: SourceDocument,
+    *,
+    item_count: int,
+) -> SourceDocument:
+    budget = subtitle_filter_budget(
+        item_count,
+        base_max_words=_positive_filter_limit(
             "VOCABULARY_FILTER_MAX_WORDS",
             DEFAULT_MAX_WORDS,
         ),
-        max_characters=_positive_filter_limit(
+        base_max_characters=_positive_filter_limit(
             "VOCABULARY_FILTER_MAX_CHARACTERS",
             DEFAULT_MAX_CHARACTERS,
         ),
     )
+    return filter_subtitle_document(
+        document,
+        max_words=budget.max_words,
+        max_characters=budget.max_characters,
+    )
+
+
+def _bound_cached_source(
+    document: SourceDocument,
+    *,
+    item_count: int,
+) -> SourceDocument:
+    if item_count == MAX_GENERATION_ITEMS:
+        return document
+    return _filter_source(document, item_count=item_count)
 
 
 def prepare_vocabulary_source(
@@ -121,12 +141,16 @@ def prepare_vocabulary_source(
     user: Any,
     title: str,
     release_year: int | None,
+    item_count: int = 12,
     uploaded_source: SourceDocument | None = None,
 ) -> PreparedVocabularySource:
     """Prepare bounded source context, consulting the owned cache before HTTP."""
     if uploaded_source is not None:
         try:
-            filtered_source = _filter_source(uploaded_source)
+            filtered_source = _filter_source(
+                uploaded_source,
+                item_count=item_count,
+            )
         except (SubtitleFilterConfigurationError, TypeError, ValueError):
             logger.exception("Uploaded vocabulary source could not be filtered")
             return PreparedVocabularySource(
@@ -168,12 +192,29 @@ def prepare_vocabulary_source(
 
     if cached is not None and cached.cache_hit:
         if cached.document is not None:
-            return PreparedVocabularySource(
-                source=cached.document,
-                movie=cached.movie,
-                note="Source: locally cached, pre-filtered English subtitles.",
-                cache_hit=True,
-            )
+            try:
+                bounded_source = _bound_cached_source(
+                    cached.document,
+                    item_count=item_count,
+                )
+            except (SubtitleFilterConfigurationError, TypeError, ValueError):
+                logger.exception("Cached vocabulary source could not be bounded")
+                return PreparedVocabularySource(
+                    source=None,
+                    movie=cached.movie,
+                    note=(
+                        "Cached subtitles could not be bounded safely. "
+                        "Generated from model knowledge instead."
+                    ),
+                    cache_hit=True,
+                )
+            else:
+                return PreparedVocabularySource(
+                    source=bounded_source if bounded_source.text else None,
+                    movie=cached.movie,
+                    note="Source: locally cached, pre-filtered English subtitles.",
+                    cache_hit=True,
+                )
         return PreparedVocabularySource(
             source=None,
             movie=cached.movie,
@@ -206,12 +247,15 @@ def prepare_vocabulary_source(
         )
 
     try:
-        filtered_source = _filter_source(acquired.document)
+        cache_source = _filter_source(
+            acquired.document,
+            item_count=MAX_GENERATION_ITEMS,
+        )
         stored = store_owned_subtitle_cache(
             user=user,
             title=title,
             release_year=release_year,
-            filtered_text=filtered_source.text,
+            filtered_text=cache_source.text,
             imdb_id=acquired.imdb_id,
             cache_version=CURRENT_SUBTITLE_CACHE_VERSION,
         )
@@ -235,8 +279,23 @@ def prepare_vocabulary_source(
                 "B1-C2 candidates. Generated from model knowledge instead."
             ),
         )
+    try:
+        bounded_source = _bound_cached_source(
+            stored.document,
+            item_count=item_count,
+        )
+    except (SubtitleFilterConfigurationError, TypeError, ValueError):
+        logger.exception("Stored vocabulary source could not be bounded")
+        return PreparedVocabularySource(
+            source=None,
+            movie=stored.movie,
+            note=(
+                "Automatic subtitles could not be bounded safely. "
+                "Generated from model knowledge instead."
+            ),
+        )
     return PreparedVocabularySource(
-        source=stored.document,
+        source=bounded_source if bounded_source.text else None,
         movie=stored.movie,
         note=(
             f"Source: automatically matched English subtitles from "

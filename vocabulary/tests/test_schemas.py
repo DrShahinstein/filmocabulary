@@ -102,18 +102,17 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
 
     def test_prompt_contains_required_guardrails(self):
         self.assertIn(
-            "Prioritize genuine B2, C1, and C2 vocabulary, phrasal verbs, and collocations.",
+            "Primary priority: Extract B2, C1, C2 vocabulary, phrasal verbs, idioms, and rich collocations",
             SYSTEM_PROMPT,
         )
-        self.assertIn("Use genuine B1 vocabulary only as a backfill tier", SYSTEM_PROMPT)
-        self.assertIn("Ignore A1-A2 words completely.", SYSTEM_PROMPT)
-        self.assertIn('family terms such as "aunt"', SYSTEM_PROMPT)
-        self.assertIn('civil-status terms such as\n"single" or "married"', SYSTEM_PROMPT)
-        self.assertIn('plain everyday adjectives such as "nice"', SYSTEM_PROMPT)
-        self.assertIn('"good boy" or "free water"', SYSTEM_PROMPT)
-        self.assertIn("Judge the difficulty of the term itself", SYSTEM_PROMPT)
+        self.assertIn("Secondary backfill: Use genuine B1 terms ONLY", SYSTEM_PROMPT)
+        self.assertIn("Strictly exclude: A1-A2 words", SYSTEM_PROMPT)
+        self.assertIn('plain family/relative names (e.g., "aunt")', SYSTEM_PROMPT)
+        self.assertIn('basic marital statuses (e.g., "single")', SYSTEM_PROMPT)
+        self.assertIn('everyday descriptors (e.g., "nice", "good boy")', SYSTEM_PROMPT)
+        self.assertIn("Judge difficulty by the term itself", SYSTEM_PROMPT)
         self.assertIn(
-            "Ensure example sentences do NOT reveal plot twists, endings, or key character deaths.",
+            "strictly free of plot twists, key character deaths, or resolutions.",
             SYSTEM_PROMPT,
         )
 
