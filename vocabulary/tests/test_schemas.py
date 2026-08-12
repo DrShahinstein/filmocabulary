@@ -112,6 +112,18 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
         self.assertIn('"brother-in-law" and "aunt"', SYSTEM_PROMPT)
         self.assertIn('"divorced" and "single"', SYSTEM_PROMPT)
         self.assertIn('"beloved" and "nice"', SYSTEM_PROMPT)
+        self.assertIn(
+            "assign CEFR solely from their lexical rarity, idiomatic complexity, and recognized pedagogical difficulty in standard English",
+            SYSTEM_PROMPT,
+        )
+        self.assertIn(
+            '"mental projection" is not advanced merely because its concept sounds complex',
+            SYSTEM_PROMPT,
+        )
+        self.assertIn(
+            "independently of the film's lore, plot, world-building, or narrative depth",
+            SYSTEM_PROMPT,
+        )
         self.assertIn("Verbatim source grounding is non-negotiable", SYSTEM_PROMPT)
         self.assertIn("NEVER invent, hallucinate", SYSTEM_PROMPT)
         self.assertIn(

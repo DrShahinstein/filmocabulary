@@ -177,6 +177,10 @@ class VocabularyGenerationServiceTests(TestCase):
         config = request_kwargs["config"]
         self.assertIn("Strictly exclude A1-A2 vocabulary", config.system_instruction)
         self.assertIn("Quality outranks count.", config.system_instruction)
+        self.assertIn(
+            '"mental projection" is not advanced merely because its concept sounds complex',
+            config.system_instruction,
+        )
         self.assertIn("Verbatim source grounding is non-negotiable", config.system_instruction)
         self.assertEqual(config.response_mime_type, "application/json")
         item_schema = config.response_json_schema["$defs"]["VocabularyItemCandidate"]

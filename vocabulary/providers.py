@@ -28,6 +28,7 @@ Quality Standard & Selection Hierarchy:
 - Quality outranks count. Do not include plain, functional, generic, predictable, or trivial words merely because a dictionary may label them B1 or B2. Omit weak candidates rather than lowering the standard.
 - Strictly exclude A1-A2 vocabulary; family or relative terms such as "brother-in-law" and "aunt"; civil or marital statuses such as "divorced" and "single"; plain everyday adjectives or descriptors such as "beloved" and "nice"; elementary objects; and ordinary compositional phrases.
 - Judge difficulty and learning value by the term itself, not by a sophisticated surrounding sentence. Return only established lexical expressions, never arbitrary adjacent words.
+- For multi-word terms, collocations, and phrasal expressions, assign CEFR solely from their lexical rarity, idiomatic complexity, and recognized pedagogical difficulty in standard English. Combining common words into an abstract, philosophical, thematic, sci-fi, or film-specific concept does not make the expression C1 or C2; for example, "mental projection" is not advanced merely because its concept sounds complex. Evaluate the expression's inherent linguistic nature independently of the film's lore, plot, world-building, or narrative depth.
 
 Grounding, Source Handling & Safety:
 - Verbatim source grounding is non-negotiable: every word_or_phrase MUST appear verbatim in the supplied source text. NEVER invent, hallucinate, paraphrase, normalize, inflect, or import an off-source term to satisfy a CEFR preference or requested_items.
