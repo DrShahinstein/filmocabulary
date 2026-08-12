@@ -1,8 +1,9 @@
 # Filmocabulary
 
 Filmocabulary is a Django application for building advanced English vocabulary from
-movies. It generates B2-C2 words, phrasal verbs, idioms, and collocations with English
-definitions and spoiler-safe example sentences, then turns saved vocabulary into
+movies. It prioritizes B2-C2 words, phrasal verbs, idioms, and collocations, using B1
+as a backfill tier when needed. Entries include English definitions and spoiler-safe
+example sentences, then saved vocabulary becomes
 multi-movie fill-in-the-blank quizzes.
 
 ## Features
@@ -82,8 +83,9 @@ that cost before generation:
 
 1. It checks the current user's movie cache before calling OpenSubtitles.
 2. It parses subtitles into complete dialogue units, preserving sentence context.
-3. It keeps units containing locally recognized B2-C2 terms and ranks them within
-   configurable limits: `1,100` words and `6,000` characters by default.
+3. It keeps units containing locally recognized B1-C2 terms, prioritizes the higher
+   levels, and ranks them within configurable limits: `1,100` words and `6,000`
+   characters by default.
 4. It caches the filtered text on the movie and reuses that bounded source for later
    generations.
 

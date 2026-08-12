@@ -22,6 +22,14 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
             "The reporter chose to ___ every small detail.",
         )
 
+    def test_accepts_b1_as_a_valid_backfill_level(self):
+        payload = vocabulary_payload(include_blank=True)
+        payload["items"][0]["CEFR_level"] = "B1"
+
+        response = VocabularyExtractionResponse.model_validate(payload)
+
+        self.assertEqual(response.items[0].cefr_level.value, "B1")
+
     def test_accepts_one_hundred_vocabulary_items(self):
         response = VocabularyExtractionResponse.model_validate(
             vocabulary_payload(item_count=100, include_blank=True)
@@ -94,11 +102,15 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
 
     def test_prompt_contains_required_guardrails(self):
         self.assertIn(
-            "Extract only B2, C1, C2 vocabulary, phrasal verbs, and collocations.",
+            "Prioritize genuine B2, C1, and C2 vocabulary, phrasal verbs, and collocations.",
             SYSTEM_PROMPT,
         )
-        self.assertIn("Ignore A1-B1 words.", SYSTEM_PROMPT)
-        self.assertIn('"aunt", "good boy", and "free water"', SYSTEM_PROMPT)
+        self.assertIn("Use genuine B1 vocabulary only as a backfill tier", SYSTEM_PROMPT)
+        self.assertIn("Ignore A1-A2 words completely.", SYSTEM_PROMPT)
+        self.assertIn('family terms such as "aunt"', SYSTEM_PROMPT)
+        self.assertIn('civil-status terms such as\n"single" or "married"', SYSTEM_PROMPT)
+        self.assertIn('plain everyday adjectives such as "nice"', SYSTEM_PROMPT)
+        self.assertIn('"good boy" or "free water"', SYSTEM_PROMPT)
         self.assertIn("Judge the difficulty of the term itself", SYSTEM_PROMPT)
         self.assertIn(
             "Ensure example sentences do NOT reveal plot twists, endings, or key character deaths.",

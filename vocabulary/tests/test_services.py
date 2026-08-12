@@ -108,6 +108,22 @@ class VocabularyGenerationServiceTests(TestCase):
         prompt = client.responses.parse.call_args.kwargs["input"][1]["content"]
         self.assertIn('"requested_items": 115', prompt)
 
+    def test_accepts_and_persists_b1_backfill_item(self):
+        payload = vocabulary_payload(word="abandon")
+        payload["items"][0]["CEFR_level"] = "B1"
+        client = self.openai_client_with_payload(payload)
+
+        result = generate_and_save_vocabulary(
+            user=self.user,
+            title="Zodiac",
+            release_year=2007,
+            item_count=1,
+            client=client,
+        )
+
+        self.assertEqual(result.created_count, 1)
+        self.assertEqual(VocabularyItem.objects.get().cefr_level, "B1")
+
     def test_trims_provider_overrun_and_keeps_requested_count(self):
         client = self.openai_client_with_payload(vocabulary_payload(item_count=18))
 
@@ -159,7 +175,8 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(request_kwargs["model"], "gemini-test-structured-model")
         self.assertIn('"movie_reference": "Zodiac (2007)"', request_kwargs["contents"])
         config = request_kwargs["config"]
-        self.assertIn("Ignore A1-B1 words.", config.system_instruction)
+        self.assertIn("Ignore A1-A2 words completely.", config.system_instruction)
+        self.assertIn("B1 vocabulary only as a backfill tier", config.system_instruction)
         self.assertEqual(config.response_mime_type, "application/json")
         item_schema = config.response_json_schema["$defs"]["VocabularyItemCandidate"]
         self.assertIn("CEFR_level", item_schema["properties"])
@@ -188,7 +205,14 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(request_kwargs["max_tokens"], 3_712)
         self.assertEqual(request_kwargs["reasoning_effort"], "none")
         self.assertNotIn("extra_body", request_kwargs)
-        self.assertIn("Ignore A1-B1 words.", request_kwargs["messages"][0]["content"])
+        self.assertIn(
+            "Ignore A1-A2 words completely.",
+            request_kwargs["messages"][0]["content"],
+        )
+        self.assertIn(
+            "backfill the remaining slots with genuine B1 entries",
+            request_kwargs["messages"][1]["content"],
+        )
         self.assertIn(
             '"movie_reference": "Zodiac (2007)"',
             request_kwargs["messages"][1]["content"],

@@ -8,14 +8,14 @@ from typing import Literal
 from .ingestion import SourceDocument
 
 
-CEFRLevel = Literal["B2", "C1", "C2"]
+CEFRLevel = Literal["B1", "B2", "C1", "C2"]
 
-FILTER_VERSION = "cefrj-1.6+octanove-c1c2-1.0:1"
+FILTER_VERSION = "cefrj-1.6+octanove-c1c2-1.0:2"
 DEFAULT_MAX_WORDS = 1_100
 DEFAULT_MAX_CHARACTERS = 6_000
 MAX_UTTERANCE_CHARACTERS = 420
 
-_LEVEL_WEIGHT: dict[CEFRLevel, int] = {"B2": 1, "C1": 2, "C2": 3}
+_LEVEL_WEIGHT: dict[CEFRLevel, int] = {"B1": 1, "B2": 2, "C1": 3, "C2": 4}
 _WORD_RE = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)?", re.UNICODE)
 _TERMINAL_RE = re.compile(r"[.!?\u2026][\"'\]\)]*$")
 _SPEAKER_RE = re.compile(r"^(?:-\s+|[A-Za-z][A-Za-z0-9 .'-]{0,24}:\s*)")

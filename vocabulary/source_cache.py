@@ -10,7 +10,7 @@ from .ingestion import SourceDocument
 
 
 # Bump this whenever subtitle_filter.FILTER_VERSION or its selection rules change.
-CURRENT_SUBTITLE_CACHE_VERSION = 1
+CURRENT_SUBTITLE_CACHE_VERSION = 2
 MAX_SUBTITLE_CACHE_VERSION = 32767
 
 

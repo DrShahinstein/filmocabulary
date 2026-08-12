@@ -150,7 +150,7 @@ def prepare_vocabulary_source(
             source=None,
             movie=None,
             note=(
-                "The uploaded source contained no locally recognized B2-C2 "
+                "The uploaded source contained no locally recognized B1-C2 "
                 "candidates. Generated from model knowledge instead."
             ),
         )
@@ -178,7 +178,7 @@ def prepare_vocabulary_source(
             source=None,
             movie=cached.movie,
             note=(
-                "Cached subtitles contained no locally recognized B2-C2 "
+                "Cached subtitles contained no locally recognized B1-C2 "
                 "candidates. Generated from model knowledge instead."
             ),
             cache_hit=True,
@@ -232,7 +232,7 @@ def prepare_vocabulary_source(
             movie=stored.movie,
             note=(
                 "Automatically matched subtitles contained no locally recognized "
-                "B2-C2 candidates. Generated from model knowledge instead."
+                "B1-C2 candidates. Generated from model knowledge instead."
             ),
         )
     return PreparedVocabularySource(

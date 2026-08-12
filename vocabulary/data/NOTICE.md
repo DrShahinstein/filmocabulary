@@ -37,8 +37,8 @@ The Filmocabulary mapping:
 - expands slash-separated spelling variants;
 - normalizes case, punctuation, whitespace, apostrophes, and hyphens;
 - combines duplicate entries using the earliest recorded CEFR level;
-- removes entries whose earliest recorded level is A1, A2, or B1;
-- retains only effective B2, C1, and C2 entries; and
+- removes entries whose earliest recorded level is A1 or A2;
+- retains only effective B1, B2, C1, and C2 entries; and
 - stores the result as an alphabetically ordered JSON mapping.
 
 The combined `cefr_words.json` dataset is distributed under CC BY-SA 4.0 and

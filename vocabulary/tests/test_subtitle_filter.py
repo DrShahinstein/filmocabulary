@@ -21,12 +21,14 @@ class SubtitleVocabularyDatasetTests(SimpleTestCase):
             payload = json.load(handle)
 
         self.assertEqual(payload["_meta"]["filter_version"], FILTER_VERSION)
+        self.assertGreater(payload["_meta"]["entry_counts"]["B1"], 2_000)
         self.assertGreater(payload["_meta"]["entry_counts"]["B2"], 2_000)
         self.assertGreater(payload["_meta"]["entry_counts"]["C1"], 800)
         self.assertGreater(payload["_meta"]["entry_counts"]["C2"], 800)
         self.assertGreater(payload["_meta"]["entry_counts"]["multiword"], 50)
         self.assertEqual(payload["entries"]["scrutinize"], "C1")
         self.assertEqual(payload["entries"]["mull over"], "C2")
+        self.assertEqual(payload["entries"]["abandon"], "B1")
 
     def test_common_polysemes_with_lower_levels_are_not_candidates(self):
         result = filter_subtitle("I will wind the clock before bed.")
@@ -52,6 +54,24 @@ class SubtitleFilteringTests(SimpleTestCase):
         self.assertIn("scrutinize", result.matched_terms)
         self.assertEqual(result.source_unit_count, 3)
         self.assertEqual(result.kept_unit_count, 1)
+
+    def test_keeps_b1_units_but_drops_a1_a2_chatter(self):
+        source = (
+            "Hello, I am coming.\n"
+            "They had to abandon the damaged vehicle.\n"
+            "Nice to meet you."
+        )
+
+        result = filter_subtitle(source)
+
+        self.assertEqual(
+            result.text,
+            "They had to abandon the damaged vehicle.",
+        )
+        self.assertIn("abandon", result.matched_terms)
+        self.assertNotIn("hello", result.matched_terms)
+        self.assertNotIn("coming", result.matched_terms)
+        self.assertNotIn("nice", result.matched_terms)
 
     def test_groups_fragmented_cues_into_a_complete_utterance(self):
         source = (
@@ -112,6 +132,20 @@ class SubtitleFilteringTests(SimpleTestCase):
         self.assertEqual(result.text, c2_sentence)
         self.assertTrue(result.truncated)
         self.assertIn("meticulous", result.matched_terms)
+
+    def test_b1_is_ranked_below_higher_level_candidates(self):
+        b1_sentence = "They had to abandon the vehicle."
+        c1_sentence = "We must scrutinize every detail."
+
+        result = filter_subtitle(
+            f"{b1_sentence}\n{c1_sentence}",
+            max_words=20,
+            max_characters=max(len(b1_sentence), len(c1_sentence)),
+        )
+
+        self.assertEqual(result.text, c1_sentence)
+        self.assertTrue(result.truncated)
+        self.assertIn("scrutinize", result.matched_terms)
 
     def test_default_budget_never_splits_an_utterance(self):
         def letters(number):

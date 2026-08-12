@@ -13,7 +13,10 @@
                 </h3>
                 <p class="movie-card__year">{{ movie.release_year|default:"Release year not set" }}</p>
             </div>
-            <span class="level-chip level-chip--mixed" title="Vocabulary levels">B2-C2</span>
+            <span class="level-chip level-chip--mixed"
+                  title="{% if vocabulary_count %}Average saved vocabulary difficulty{% else %}No saved vocabulary{% endif %}">
+                {{ movie.vocabulary_cefr_badge }}
+            </span>
         </div>
 
         <div class="movie-card__meta">

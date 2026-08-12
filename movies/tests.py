@@ -51,6 +51,38 @@ class DashboardTests(TestCase):
             any("{% csrf_token %}" in str(warning.message) for warning in caught)
         )
 
+    def test_dashboard_movie_card_uses_dynamic_cefr_badge(self):
+        movie = Movie.objects.create(
+            user=self.user,
+            title="Arrival",
+            release_year=2016,
+        )
+        for word, level in (("adapt", "B1"), ("scrutinize", "B2")):
+            VocabularyItem.objects.create(
+                movie=movie,
+                word_or_phrase=word,
+                type=VocabularyItem.Type.VERB,
+                cefr_level=level,
+                definition_en=f"Definition for {word}.",
+                example_sentence=f"They must {word} the plan.",
+                blank_sentence="They must ___ the plan.",
+            )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("movies:dashboard"))
+
+        self.assertContains(response, "≈B1-B2")
+        self.assertNotContains(response, ">B2-C2</span>", html=False)
+
+    def test_dashboard_movie_card_handles_no_saved_vocabulary(self):
+        Movie.objects.create(user=self.user, title="Arrival", release_year=2016)
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("movies:dashboard"))
+
+        self.assertContains(response, "No saved vocabulary")
+        self.assertContains(response, "—")
+
 
 class MovieConstraintTests(TestCase):
     @classmethod
@@ -68,6 +100,40 @@ class MovieConstraintTests(TestCase):
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             Movie.objects.create(user=self.user, title="zodiac")
+
+
+class MovieCefrBadgeTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        user = get_user_model().objects.create_user(username="level-owner")
+        cls.movie = Movie.objects.create(user=user, title="Arrival", release_year=2016)
+
+    def add_item(self, word, level):
+        return VocabularyItem.objects.create(
+            movie=self.movie,
+            word_or_phrase=word,
+            type=VocabularyItem.Type.VERB,
+            cefr_level=level,
+            definition_en=f"Definition for {word}.",
+            example_sentence=f"They must {word} the plan.",
+            blank_sentence="They must ___ the plan.",
+        )
+
+    def test_empty_collection_has_no_level(self):
+        self.assertEqual(self.movie.vocabulary_cefr_badge, "—")
+
+    def test_equal_adjacent_levels_render_as_range(self):
+        self.add_item("adapt", "B1")
+        self.add_item("scrutinize", "B2")
+
+        self.assertEqual(self.movie.vocabulary_cefr_badge, "≈B1-B2")
+
+    def test_collection_weighted_toward_one_level_renders_single_level(self):
+        for word in ("adapt", "abandon", "absorb"):
+            self.add_item(word, "B2")
+        self.add_item("scrutinize", "C1")
+
+        self.assertEqual(self.movie.vocabulary_cefr_badge, "≈B2")
 
 
 class MovieDeletionTests(TestCase):

@@ -17,6 +17,7 @@ class VocabularyItem(models.Model):
         OTHER = "other", "Other"
 
     class CefrLevel(models.TextChoices):
+        B1 = "B1", "B1"
         B2 = "B2", "B2"
         C1 = "C1", "C1"
         C2 = "C2", "C2"
@@ -44,7 +45,7 @@ class VocabularyItem(models.Model):
                 name="vocab_unique_movie_term_ci",
             ),
             models.CheckConstraint(
-                condition=models.Q(cefr_level__in=("B2", "C1", "C2")),
+                condition=models.Q(cefr_level__in=("B1", "B2", "C1", "C2")),
                 name="vocab_valid_cefr",
             ),
             models.CheckConstraint(

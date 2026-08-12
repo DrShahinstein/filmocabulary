@@ -26,6 +26,16 @@ class VocabularyItemModelTests(TestCase):
 
         self.assertEqual(item.blank_sentence, "The reporter chose to ___ every small detail.")
 
+    def test_b1_item_passes_model_and_database_validation(self):
+        fields = vocabulary_item_fields(movie=self.movie, word="abandon")
+        fields["cefr_level"] = VocabularyItem.CefrLevel.B1
+        item = VocabularyItem(**fields)
+
+        item.full_clean()
+        item.save()
+
+        self.assertEqual(item.cefr_level, "B1")
+
     def test_model_validation_rejects_incorrect_blank(self):
         fields = vocabulary_item_fields(movie=self.movie)
         fields["blank_sentence"] = "This is not the source sentence: ___."
@@ -45,4 +55,3 @@ class VocabularyItemModelTests(TestCase):
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             VocabularyItem.objects.create(**duplicate)
-
