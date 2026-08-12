@@ -102,19 +102,24 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
 
     def test_prompt_contains_required_guardrails(self):
         self.assertIn(
-            "Primary priority: Extract B2, C1, C2 vocabulary, phrasal verbs, idioms, and rich collocations",
+            "Primary: Extract all genuine, high-value B2, C1, and C2 terms present in the source.",
             SYSTEM_PROMPT,
         )
-        self.assertIn("Secondary backfill: Use genuine B1 terms ONLY", SYSTEM_PROMPT)
-        self.assertIn("Strictly exclude: A1-A2 words", SYSTEM_PROMPT)
-        self.assertIn('plain family/relative names (e.g., "aunt")', SYSTEM_PROMPT)
-        self.assertIn('basic marital statuses (e.g., "single")', SYSTEM_PROMPT)
-        self.assertIn('everyday descriptors (e.g., "nice", "good boy")', SYSTEM_PROMPT)
-        self.assertIn("Judge difficulty by the term itself", SYSTEM_PROMPT)
+        self.assertIn("expressive, figurative, cinematic, literary, or nuanced", SYSTEM_PROMPT)
+        self.assertIn("If and only if the source genuinely lacks enough qualifying B2-C2 terms", SYSTEM_PROMPT)
+        self.assertIn("Quality outranks count.", SYSTEM_PROMPT)
+        self.assertIn("plain, functional, generic, predictable, or trivial", SYSTEM_PROMPT)
+        self.assertIn('"brother-in-law" and "aunt"', SYSTEM_PROMPT)
+        self.assertIn('"divorced" and "single"', SYSTEM_PROMPT)
+        self.assertIn('"beloved" and "nice"', SYSTEM_PROMPT)
+        self.assertIn("Verbatim source grounding is non-negotiable", SYSTEM_PROMPT)
+        self.assertIn("NEVER invent, hallucinate", SYSTEM_PROMPT)
         self.assertIn(
-            "strictly free of plot twists, key character deaths, or resolutions.",
+            "Do not reveal plot twists, endings, culprits, betrayals, key character deaths, or resolutions.",
             SYSTEM_PROMPT,
         )
+        self.assertIn("literal base/uninflected form", SYSTEM_PROMPT)
+        self.assertIn("outside the required JSON schema", SYSTEM_PROMPT)
 
     def test_provider_schema_uses_aliases_and_forbids_extra_properties(self):
         response_schema = VocabularyExtractionResponse.model_json_schema(by_alias=True)
