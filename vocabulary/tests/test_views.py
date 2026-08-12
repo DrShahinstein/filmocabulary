@@ -6,8 +6,10 @@ from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from movies.models import Movie
+from quizzes.models import QuizAttempt, QuizSession
 from vocabulary.ingestion import SourceDocument
 from vocabulary.models import VocabularyItem
 from vocabulary.services import (
@@ -364,6 +366,49 @@ class VocabularyViewTests(TestCase):
         self.client.force_login(self.user)
         response = self.client.post(url, HTTP_HX_REQUEST="true")
         self.assertEqual(response.status_code, 204)
+        self.assertFalse(VocabularyItem.objects.filter(pk=self.item.pk).exists())
+
+    def test_delete_removes_active_quiz_session_containing_item(self):
+        session = QuizSession.objects.create(
+            user=self.user,
+            total_questions=1,
+        )
+        session.selected_movies.add(self.movie)
+        session.questions.add(self.item)
+
+        response = self.client.post(
+            reverse("vocabulary:item_delete", args=[self.item.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(QuizSession.objects.filter(pk=session.pk).exists())
+        self.assertFalse(VocabularyItem.objects.filter(pk=self.item.pk).exists())
+
+    def test_delete_removes_completed_quiz_session_containing_item(self):
+        session = QuizSession.objects.create(
+            user=self.user,
+            total_questions=1,
+            correct_answers=1,
+            completed_at=timezone.now(),
+        )
+        session.selected_movies.add(self.movie)
+        session.questions.add(self.item)
+        QuizAttempt.objects.create(
+            session=session,
+            vocabulary_item=self.item,
+            submitted_answer=self.item.word_or_phrase,
+            is_correct=True,
+        )
+
+        response = self.client.post(
+            reverse("vocabulary:item_delete", args=[self.item.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(QuizSession.objects.filter(pk=session.pk).exists())
+        self.assertFalse(QuizAttempt.objects.filter(session_id=session.pk).exists())
         self.assertFalse(VocabularyItem.objects.filter(pk=self.item.pk).exists())
 
     def test_generation_requires_login_and_csrf(self):
