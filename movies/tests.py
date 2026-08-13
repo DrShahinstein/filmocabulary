@@ -51,6 +51,14 @@ class DashboardTests(TestCase):
             any("{% csrf_token %}" in str(warning.message) for warning in caught)
         )
 
+    def test_dashboard_uses_htmx_without_loading_jquery(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("movies:dashboard"))
+
+        self.assertContains(response, "htmx.org@2.0.4")
+        self.assertNotContains(response, "jquery", status_code=200)
+
     def test_dashboard_movie_card_uses_dynamic_cefr_badge(self):
         movie = Movie.objects.create(
             user=self.user,

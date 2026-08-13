@@ -198,16 +198,6 @@
     document.addEventListener("DOMContentLoaded", function () {
         announcer = document.getElementById("app-announcer");
         initRegion(document);
-
-        if (window.jQuery) {
-            window.jQuery.ajaxSetup({
-                beforeSend: function (xhr, settings) {
-                    if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type)) {
-                        xhr.setRequestHeader("X-CSRFToken", csrfToken());
-                    }
-                }
-            });
-        }
     });
 
     document.body.addEventListener("htmx:configRequest", function (event) {

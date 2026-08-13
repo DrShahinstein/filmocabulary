@@ -14,14 +14,14 @@ multi-movie fill-in-the-blank quizzes.
 - Local subtitle filtering and per-user caching to reduce repeated input-token usage
 - Saved movie library with vocabulary management
 - Multi-movie quizzes, immediate feedback, scores, and attempt history
-- HTMX and jQuery interactions without full-page reloads
+- HTMX and native JavaScript interactions without full-page reloads
 
 ## Stack
 
 - Python 3.11+
 - Django 5.2
 - SQLite for development; PostgreSQL for production
-- HTMX, jQuery, and custom CSS
+- HTMX, native JavaScript, and custom CSS
 - Pydantic for LLM response validation
 
 ## Local Setup
