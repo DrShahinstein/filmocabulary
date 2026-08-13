@@ -1324,7 +1324,7 @@ textarea::placeholder {
     margin-inline: auto;
 }
 
-.quiz-workspace > .quiz-panel {
+.quiz-workspace #quiz-region > .quiz-panel {
     padding: 24px;
     border: 1px solid var(--line);
     border-top: 3px solid var(--gold);
@@ -2224,7 +2224,7 @@ textarea::placeholder {
         flex-basis: calc(100% - 40px);
     }
 
-    .quiz-workspace > .quiz-panel {
+    .quiz-workspace #quiz-region > .quiz-panel {
         padding: 18px;
     }
 

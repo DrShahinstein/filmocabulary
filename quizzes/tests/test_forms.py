@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from django.test import TestCase
 
 from quizzes.forms import QuizAnswerForm
@@ -14,7 +16,7 @@ class QuizAnswerFormTests(TestCase):
             make_vocabulary(
                 movie,
                 word=f"word-{index}",
-                definition=f"Distinct meaning {index}.",
+                definition=f"distinct meaning {index}.",
             )
         self.question = generate_question(user=self.user)
 
@@ -27,6 +29,25 @@ class QuizAnswerFormTests(TestCase):
             {option.vocabulary_item_id for option in self.question.options},
         )
         self.assertEqual(form.fields["question_token"].initial, self.question.token)
+
+    def test_option_labels_use_parentheses_and_sentence_case(self):
+        option = self.question.options[0]
+        example_definition = "a perfect and romantic wedding, like in a fairy tale"
+        question = replace(
+            self.question,
+            options=(
+                replace(option, definition=example_definition),
+                *self.question.options[1:],
+            ),
+        )
+
+        form = QuizAnswerForm(question=question)
+        labels = dict(form.fields["selected_option"].choices)
+
+        self.assertEqual(
+            labels[option.vocabulary_item_id],
+            f"{option.label}) A perfect and romantic wedding, like in a fairy tale",
+        )
 
     def test_form_rejects_an_option_outside_the_question(self):
         form = QuizAnswerForm(

@@ -1,4 +1,5 @@
 from django import forms
+from django.utils.text import capfirst
 
 
 class QuizAnswerForm(forms.Form):
@@ -12,7 +13,10 @@ class QuizAnswerForm(forms.Form):
     def __init__(self, *args, question, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["selected_option"].choices = [
-            (option.vocabulary_item_id, f"{option.label}. {option.definition}")
+            (
+                option.vocabulary_item_id,
+                f"{option.label}) {capfirst(option.definition.strip())}",
+            )
             for option in question.options
         ]
         self.fields["question_token"].initial = question.token
