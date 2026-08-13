@@ -1,10 +1,6 @@
 # Filmocabulary
 
-Filmocabulary is a Django application for building advanced English vocabulary from
-movies. It prioritizes B2-C2 words, phrasal verbs, idioms, and collocations, using B1
-as a backfill tier when needed. Entries include English definitions and spoiler-safe
-example sentences. Saved vocabulary then powers algorithmic multiple-choice practice and
-per-word spaced-repetition progress without additional LLM calls.
+Filmocabulary is a smart vocabulary learning web-app that transforms film subtitles into personalized study materials. It automatically extracts rare and useful vocabulary from films, complete with definitions and real context, and helps you retain them using an algorithmic Spaced Repetition System (SRS).
 
 ## Features
 
