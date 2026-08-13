@@ -179,6 +179,10 @@ class VocabularyViewTests(TestCase):
 
         self.assertContains(response, "80 new entries saved")
         self.assertNotContains(response, "of 80 requested new entries")
+        self.assertContains(
+            response,
+            'class="message message--success message--generation"',
+        )
 
     @patch("vocabulary.views.generate_and_save_vocabulary")
     def test_generation_forwards_uploaded_srt_as_source_document(self, generate):

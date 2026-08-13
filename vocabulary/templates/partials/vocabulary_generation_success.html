@@ -1,4 +1,4 @@
-<div class="message message--success" role="status">
+<div class="message message--success message--generation" role="status">
   <i data-lucide="circle-check" aria-hidden="true"></i>
   <div class="message__content">
     <strong>{{ movie.title }} is ready.</strong>
@@ -8,8 +8,8 @@
     </span>
     {% if yield_message %}<span>{{ yield_message }}</span>{% endif %}
     {% if source_note %}<span>{{ source_note }}</span>{% endif %}
-    <a class="message__action" href="{% url 'vocabulary:movie_detail' movie.pk %}">Open vocabulary</a>
   </div>
+  <a class="message__action" href="{% url 'vocabulary:movie_detail' movie.pk %}">Open vocabulary</a>
 </div>
 
 <div class="vocabulary-generation-preview">

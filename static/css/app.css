@@ -2018,6 +2018,11 @@ textarea::placeholder {
     gap: 3px 8px;
 }
 
+.message--generation {
+    display: grid;
+    grid-template-columns: 19px minmax(0, 1fr) auto;
+}
+
 .message__action {
     margin-left: auto;
     font-weight: 720;
@@ -2257,6 +2262,16 @@ textarea::placeholder {
     .app-container,
     .app-header__inner {
         width: min(100% - 22px, var(--container));
+    }
+
+    .message--generation {
+        grid-template-columns: 19px minmax(0, 1fr);
+        align-items: start;
+    }
+
+    .message--generation .message__action {
+        grid-column: 2;
+        margin-left: 0;
     }
 
     .brand__mark {
