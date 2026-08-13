@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Learning Pool | Filmocabulary{% endblock %}
+
+{% block content %}
+<div class="learning-workspace">
+    <header class="section-heading section-heading--with-tools">
+        <div>
+            <p class="eyebrow">Focused study</p>
+            <h1>Learning Pool</h1>
+            <p class="page-intro">Words you miss remain here until you answer them correctly.</p>
+        </div>
+        <div class="button-row">
+            <a class="button button--secondary" href="{% url 'quizzes:dashboard' %}">View progress</a>
+            {% if word_statuses %}
+                <a class="button button--primary" href="{% url 'quizzes:question' 'learning' %}">Quiz my Learning Pool</a>
+            {% endif %}
+        </div>
+    </header>
+
+    {% if word_statuses %}
+        <div class="learning-list">
+            {% for word_status in word_statuses %}
+                {% with item=word_status.vocabulary_item %}
+                <article class="learning-card">
+                    <header class="learning-card__header">
+                        <div>
+                            <span class="level-badge level-badge--{{ item.cefr_level|lower }}">{{ item.cefr_level }}</span>
+                            <span class="status-badge">{{ item.get_type_display }}</span>
+                            <h2>{{ item.word_or_phrase }}</h2>
+                        </div>
+                        <span class="learning-card__movie">{{ item.movie.title }}{% if item.movie.release_year %} ({{ item.movie.release_year }}){% endif %}</span>
+                    </header>
+                    <p class="learning-card__definition">{{ item.definition_en }}</p>
+                    <blockquote>{{ item.example_sentence }}</blockquote>
+                    <footer>
+                        Missed {{ word_status.wrong_count }} time{{ word_status.wrong_count|pluralize }}
+                        {% if word_status.last_tested_at %} · Last tested {{ word_status.last_tested_at|timesince }} ago{% endif %}
+                    </footer>
+                </article>
+                {% endwith %}
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <i data-lucide="circle-check-big" aria-hidden="true"></i>
+            <h2>Your Learning Pool is clear</h2>
+            <p>Any word you miss during collection practice will appear here automatically.</p>
+            <a class="button button--primary" href="{% url 'quizzes:question' 'collection' %}">Practice collection</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

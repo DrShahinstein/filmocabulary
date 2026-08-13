@@ -1,181 +1,222 @@
-from django.test import TestCase, override_settings
+from django.core.cache import cache
+from django.test import TestCase
 from django.urls import reverse
 
-from quizzes.models import QuizAttempt, QuizSession
-from quizzes.services import next_unanswered_question
+from quizzes.models import UserWordStatus
+from quizzes.services import generate_question
 
 from .factories import make_movie, make_user, make_vocabulary
 
 
-TEST_STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-    "staticfiles": {
-        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"
-    },
-}
-
-
-@override_settings(
-    ROOT_URLCONF="quizzes.tests.urls",
-    STORAGES=TEST_STORAGES,
-)
 class QuizViewTests(TestCase):
     def setUp(self):
-        self.user = make_user("learner")
-        self.other_user = make_user("other")
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.user = make_user("view-learner")
+        self.other_user = make_user("view-other")
         self.movie = make_movie(self.user)
-        self.other_movie = make_movie(self.other_user, "Heat", 1995)
-        self.words = [
-            make_vocabulary(self.movie, "meticulous"),
-            make_vocabulary(self.movie, "conundrum", "The case presented a ___."),
+        self.items = [
+            make_vocabulary(
+                self.movie,
+                word=f"word-{index}",
+                definition=f"Meaning {index}.",
+            )
+            for index in range(6)
         ]
-        self.outsider_word = make_vocabulary(
-            self.other_movie,
-            "elusive",
-            "The lead remained ___.",
-        )
-
-    def make_session(self, *, user=None, movie=None, words=None):
-        user = user or self.user
-        movie = movie or self.movie
-        words = words or self.words
-        session = QuizSession.objects.create(user=user, total_questions=len(words))
-        session.selected_movies.add(movie)
-        session.questions.set(words)
-        return session
-
-    def test_start_requires_authentication(self):
-        response = self.client.get(reverse("quizzes:start"))
-
-        self.assertEqual(response.status_code, 302)
-        self.assertIn("login", response.url)
-
-    def test_builder_requires_authentication(self):
-        response = self.client.get(reverse("quizzes:builder"))
-
-        self.assertEqual(response.status_code, 302)
-        self.assertIn("login", response.url)
-
-    def test_builder_renders_owned_movie_choices(self):
+        other_movie = make_movie(self.other_user, "Heat", 1995)
+        self.outsider = make_vocabulary(other_movie, word="outsider")
         self.client.force_login(self.user)
 
-        response = self.client.get(reverse("quizzes:builder"))
+    def test_progress_dashboard_requires_login(self):
+        self.client.logout()
+        url = reverse("quizzes:dashboard")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "partials/quiz_start_form.html")
-        self.assertContains(response, self.movie.title)
-        self.assertNotContains(response, self.other_movie.title)
+        response = self.client.get(url)
 
-    def test_htmx_start_creates_session_and_returns_first_question(self):
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("quizzes:start"),
-            {"movies": [self.movie.pk], "question_count": 2},
-            HTTP_HX_REQUEST="true",
+        self.assertRedirects(response, f"{reverse('login')}?next={url}")
+
+    def test_dashboard_summarizes_mastered_learning_and_new_words(self):
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[0],
+            status=UserWordStatus.Status.MASTERED,
+        )
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[1],
+            status=UserWordStatus.Status.LEARNING,
+            wrong_count=1,
         )
 
+        response = self.client.get(reverse("quizzes:dashboard"))
+
         self.assertEqual(response.status_code, 200)
-        session = QuizSession.objects.get()
-        self.assertEqual(session.questions.count(), 2)
         self.assertEqual(
-            response.headers["HX-Push-Url"],
-            reverse("quizzes:play", kwargs={"pk": session.pk}),
+            response.context["progress"],
+            {"total": 6, "new": 4, "learning": 1, "mastered": 1},
         )
-        self.assertContains(response, "Question 1 of 2")
+        self.assertContains(response, "Your progress")
+        self.assertNotContains(response, "Quiz history")
 
-    def test_start_rejects_forged_movie_ownership(self):
-        self.client.force_login(self.user)
-        response = self.client.post(
-            reverse("quizzes:start"),
-            {"movies": [self.other_movie.pk], "question_count": 1},
-            HTTP_HX_REQUEST="true",
+    def test_learning_pool_lists_only_current_users_learning_words(self):
+        learning = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[0],
+            status=UserWordStatus.Status.LEARNING,
+            wrong_count=2,
         )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(QuizSession.objects.exists())
-        self.assertContains(response, "Select a valid choice")
-
-    def test_user_cannot_open_another_users_session(self):
-        session = self.make_session(
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[1],
+            status=UserWordStatus.Status.MASTERED,
+        )
+        UserWordStatus.objects.create(
             user=self.other_user,
-            movie=self.other_movie,
-            words=[self.outsider_word],
-        )
-        self.client.force_login(self.user)
-
-        response = self.client.get(reverse("quizzes:play", args=[session.pk]))
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_answer_returns_immediate_feedback_and_updates_score(self):
-        session = self.make_session()
-        question = next_unanswered_question(session)
-        self.client.force_login(self.user)
-
-        response = self.client.post(
-            reverse("quizzes:answer", args=[session.pk]),
-            {
-                "vocabulary_item": question.pk,
-                "submitted_answer": question.word_or_phrase.upper(),
-            },
-            HTTP_HX_REQUEST="true",
+            vocabulary_item=self.outsider,
+            status=UserWordStatus.Status.LEARNING,
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Correct")
-        self.assertContains(response, "Next question")
-        session.refresh_from_db()
-        self.assertEqual(session.correct_answers, 1)
+        response = self.client.get(reverse("quizzes:learning_pool"))
 
-    def test_duplicate_answer_does_not_change_the_recorded_result(self):
-        session = self.make_session()
-        question = next_unanswered_question(session)
-        self.client.force_login(self.user)
-        url = reverse("quizzes:answer", args=[session.pk])
-        payload = {
-            "vocabulary_item": question.pk,
-            "submitted_answer": question.word_or_phrase,
-        }
-        self.client.post(url, payload, HTTP_HX_REQUEST="true")
-        payload["submitted_answer"] = "unrelated"
-
-        response = self.client.post(url, payload, HTTP_HX_REQUEST="true")
-
-        self.assertContains(response, "already recorded")
-        self.assertEqual(QuizAttempt.objects.filter(session=session).count(), 1)
-        session.refresh_from_db()
-        self.assertEqual(session.correct_answers, 1)
-
-    def test_forged_question_is_not_recorded(self):
-        session = self.make_session()
-        self.client.force_login(self.user)
-
-        response = self.client.post(
-            reverse("quizzes:answer", args=[session.pk]),
-            {
-                "vocabulary_item": self.outsider_word.pk,
-                "submitted_answer": self.outsider_word.word_or_phrase,
-            },
-            HTTP_HX_REQUEST="true",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(session.attempts.exists())
-        self.assertContains(response, "Select a valid choice")
-
-    def test_history_only_lists_current_users_sessions(self):
-        own_session = self.make_session()
-        other_session = self.make_session(
-            user=self.other_user,
-            movie=self.other_movie,
-            words=[self.outsider_word],
-        )
-        self.client.force_login(self.user)
-
-        response = self.client.get(reverse("quizzes:history"))
-
-        self.assertEqual(response.status_code, 200)
+        self.assertQuerySetEqual(response.context["word_statuses"], [learning])
+        self.assertContains(response, self.items[0].word_or_phrase)
+        self.assertContains(response, self.items[0].definition_en)
+        self.assertContains(response, self.items[0].example_sentence)
         self.assertContains(response, self.movie.title)
-        self.assertNotContains(response, self.other_movie.title)
-        self.assertIn(own_session, response.context["sessions"])
-        self.assertNotIn(other_session, response.context["sessions"])
+        self.assertNotContains(response, self.items[1].word_or_phrase)
+        self.assertNotContains(response, self.outsider.word_or_phrase)
+
+    def test_empty_learning_pool_has_helpful_state(self):
+        response = self.client.get(reverse("quizzes:learning_pool"))
+
+        self.assertContains(response, "Your Learning Pool is clear")
+
+    def test_question_view_renders_five_radio_options(self):
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "quizzes/practice.html")
+        self.assertContains(response, 'type="radio"', count=5)
+        self.assertNotContains(response, self.outsider.definition_en)
+
+    def test_htmx_question_returns_only_question_partial(self):
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"]),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertTemplateUsed(response, "partials/mcq_question.html")
+        self.assertTemplateNotUsed(response, "quizzes/practice.html")
+
+    def test_learning_question_targets_only_learning_word(self):
+        learning = self.items[3]
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=learning,
+            status=UserWordStatus.Status.LEARNING,
+            wrong_count=1,
+        )
+
+        response = self.client.get(reverse("quizzes:question", args=["learning"]))
+
+        self.assertEqual(response.context["question"].target, learning)
+
+    def test_correct_post_updates_status_and_returns_feedback(self):
+        question = generate_question(user=self.user, target=self.items[0])
+
+        response = self.client.post(
+            reverse("quizzes:answer", args=["collection"]),
+            {
+                "question_token": question.token,
+                "selected_option": self.items[0].pk,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "partials/mcq_feedback.html")
+        self.assertContains(response, "Correct · Mastered")
+        self.assertEqual(
+            UserWordStatus.objects.get(
+                user=self.user,
+                vocabulary_item=self.items[0],
+            ).status,
+            UserWordStatus.Status.MASTERED,
+        )
+
+    def test_wrong_post_updates_learning_pool_and_returns_feedback(self):
+        question = generate_question(user=self.user, target=self.items[0])
+        wrong_id = next(
+            option.vocabulary_item_id
+            for option in question.options
+            if option.vocabulary_item_id != self.items[0].pk
+        )
+
+        response = self.client.post(
+            reverse("quizzes:answer", args=["collection"]),
+            {"question_token": question.token, "selected_option": wrong_id},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertContains(response, "Added to Learning Pool")
+        status = UserWordStatus.objects.get(
+            user=self.user,
+            vocabulary_item=self.items[0],
+        )
+        self.assertEqual(status.status, UserWordStatus.Status.LEARNING)
+        self.assertEqual(status.wrong_count, 1)
+
+    def test_answer_rejects_option_not_present_in_signed_question(self):
+        question = generate_question(user=self.user, target=self.items[0])
+
+        response = self.client.post(
+            reverse("quizzes:answer", args=["collection"]),
+            {"question_token": question.token, "selected_option": self.outsider.pk},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertFalse(UserWordStatus.objects.filter(user=self.user).exists())
+
+    def test_answer_rejects_question_from_different_url_pool(self):
+        question = generate_question(user=self.user, target=self.items[0])
+
+        response = self.client.post(
+            reverse("quizzes:answer", args=["learning"]),
+            {
+                "question_token": question.token,
+                "selected_option": self.items[0].pk,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(UserWordStatus.objects.filter(user=self.user).exists())
+
+    def test_answer_is_post_only(self):
+        response = self.client.get(
+            reverse("quizzes:answer", args=["collection"])
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_invalid_pool_is_handled_gracefully(self):
+        response = self.client.get(reverse("quizzes:question", args=["invalid"]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Choose a valid practice pool")
+
+    def test_question_handles_library_with_too_few_words(self):
+        small_user = make_user("view-small")
+        movie = make_movie(small_user, "Primer", 2004)
+        make_vocabulary(movie)
+        self.client.force_login(small_user)
+
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "at least five vocabulary entries")

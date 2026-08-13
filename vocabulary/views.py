@@ -1,7 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
@@ -191,13 +190,7 @@ def delete_vocabulary_item(request: HttpRequest, pk: int) -> HttpResponse:
         movie__user=request.user,
     )
 
-    with transaction.atomic():
-        # A quiz stores fixed totals and scores, so removing one of its questions
-        # would make both active and completed sessions internally inconsistent.
-        from quizzes.models import QuizSession
-
-        QuizSession.objects.filter(questions=item).delete()
-        item.delete()
+    item.delete()
 
     response = HttpResponse(status=204)
     response["HX-Trigger"] = "vocabularyChanged"

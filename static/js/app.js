@@ -81,30 +81,6 @@
         });
     }
 
-    function initSelectionForms(root) {
-        root.querySelectorAll("[data-selection-form]:not([data-ready]), .quiz-form:not([data-ready])").forEach(function (form) {
-            form.dataset.ready = "true";
-            var checkboxes = Array.from(form.querySelectorAll('input[type="checkbox"][name="movies"]'));
-            var counter = form.querySelector("[data-selection-count]");
-            var submit = form.querySelector('button[type="submit"]');
-
-            function updateSelection() {
-                var selected = checkboxes.filter(function (checkbox) { return checkbox.checked; }).length;
-                if (counter) {
-                    counter.textContent = selected + " selected";
-                }
-                if (submit) {
-                    submit.disabled = selected === 0;
-                }
-            }
-
-            checkboxes.forEach(function (checkbox) {
-                checkbox.addEventListener("change", updateSelection);
-            });
-            updateSelection();
-        });
-    }
-
     function initFocusButtons(root) {
         root.querySelectorAll("[data-focus-target]:not([data-ready])").forEach(function (button) {
             button.dataset.ready = "true";
@@ -117,18 +93,6 @@
                 window.setTimeout(function () { target.focus(); }, 220);
             });
         });
-    }
-
-    function updateDashboardQuizState() {
-        var workspace = document.querySelector(".dashboard-workspace");
-        var launchRegion = document.getElementById("quiz-launch-region");
-        if (!workspace || !launchRegion) {
-            return;
-        }
-
-        var hasSetup = Boolean(launchRegion.querySelector(".quiz-setup"));
-        var hasActiveQuiz = Boolean(launchRegion.querySelector(".quiz-panel, .quiz-complete"));
-        workspace.classList.toggle("is-quiz-active", hasActiveQuiz && !hasSetup);
     }
 
     function updateLibraryCount() {
@@ -180,9 +144,7 @@
     function initRegion(root) {
         initDismissibleMessages(root);
         initMovieFilter(root);
-        initSelectionForms(root);
         initFocusButtons(root);
-        updateDashboardQuizState();
         updateLibraryCount();
         updateVocabularyCount();
         renderIcons();

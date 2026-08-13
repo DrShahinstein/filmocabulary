@@ -42,10 +42,10 @@
                             <span>Library</span>
                         </a>
                         <a class="primary-nav__link{% if request.resolver_match.namespace == 'quizzes' %} is-active{% endif %}"
-                           href="{% url 'quizzes:history' %}"
+                           href="{% url 'quizzes:dashboard' %}"
                            {% if request.resolver_match.namespace == 'quizzes' %}aria-current="page"{% endif %}>
                             <i data-lucide="chart-no-axes-combined" aria-hidden="true"></i>
-                            <span>Quiz history</span>
+                            <span>Progress</span>
                         </a>
                     </nav>
 
@@ -97,10 +97,10 @@
                     <span>Library</span>
                 </a>
                 <a class="mobile-nav__link{% if request.resolver_match.namespace == 'quizzes' %} is-active{% endif %}"
-                   href="{% url 'quizzes:history' %}"
+                   href="{% url 'quizzes:dashboard' %}"
                    {% if request.resolver_match.namespace == 'quizzes' %}aria-current="page"{% endif %}>
                     <i data-lucide="chart-no-axes-combined" aria-hidden="true"></i>
-                    <span>History</span>
+                    <span>Progress</span>
                 </a>
                 <form method="post" action="{% url 'logout' %}" class="mobile-nav__form">
                     {% csrf_token %}

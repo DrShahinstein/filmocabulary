@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Practice | Filmocabulary{% endblock %}
+
+{% block content %}
+<div class="quiz-workspace">
+    <header class="section-heading section-heading--with-tools">
+        <div>
+            <p class="eyebrow">{% if pool == 'learning' %}Learning Pool{% else %}Collection{% endif %}</p>
+            <h1>Vocabulary practice</h1>
+        </div>
+        <a class="button button--secondary" href="{% if pool == 'learning' %}{% url 'quizzes:learning_pool' %}{% else %}{% url 'quizzes:dashboard' %}{% endif %}">Finish</a>
+    </header>
+    <div id="quiz-region" aria-live="polite">
+        {% include "partials/mcq_question.html" %}
+    </div>
+</div>
+{% endblock %}

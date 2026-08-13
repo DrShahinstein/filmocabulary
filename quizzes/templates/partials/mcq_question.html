@@ -1,0 +1,44 @@
+{% if unavailable_message %}
+    <section class="quiz-panel quiz-unavailable">
+        <i data-lucide="layers-3" aria-hidden="true"></i>
+        <h2>Practice is not ready yet</h2>
+        <p>{{ unavailable_message }}</p>
+        <a class="button button--primary" href="{% url 'quizzes:dashboard' %}">View progress</a>
+    </section>
+{% else %}
+    <section class="quiz-panel">
+        <div class="quiz-question__meta">
+            <span class="level-badge level-badge--{{ question.target.cefr_level|lower }}">{{ question.target.cefr_level }}</span>
+            <span>{{ question.target.get_type_display }}</span>
+            <span aria-hidden="true">·</span>
+            <span>{{ question.target.movie.title }}</span>
+        </div>
+        <p class="page-kicker">Which definition best matches</p>
+        <h2 class="mcq-term">{{ question.target.word_or_phrase }}</h2>
+        {% if question.target.example_sentence %}
+            <p class="mcq-context">{{ question.target.example_sentence }}</p>
+        {% endif %}
+
+        <form class="mcq-form"
+              method="post"
+              action="{% url 'quizzes:answer' pool %}"
+              hx-post="{% url 'quizzes:answer' pool %}"
+              hx-target="#quiz-region"
+              hx-swap="innerHTML"
+              hx-disabled-elt="find button[type='submit']"
+              novalidate>
+            {% csrf_token %}
+            {{ form.question_token }}
+            <fieldset>
+                <legend>{{ form.selected_option.label }}</legend>
+                <div class="mcq-options">
+                    {% for radio in form.selected_option %}
+                        <label class="mcq-option" for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>
+                    {% endfor %}
+                </div>
+                {% for error in form.selected_option.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
+            </fieldset>
+            <button class="button button--primary" type="submit">Check answer</button>
+        </form>
+    </section>
+{% endif %}

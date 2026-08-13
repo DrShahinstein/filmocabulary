@@ -3,8 +3,8 @@
 Filmocabulary is a Django application for building advanced English vocabulary from
 movies. It prioritizes B2-C2 words, phrasal verbs, idioms, and collocations, using B1
 as a backfill tier when needed. Entries include English definitions and spoiler-safe
-example sentences, then saved vocabulary becomes
-multi-movie fill-in-the-blank quizzes.
+example sentences. Saved vocabulary then powers algorithmic multiple-choice practice and
+per-word spaced-repetition progress without additional LLM calls.
 
 ## Features
 
@@ -13,7 +13,8 @@ multi-movie fill-in-the-blank quizzes.
 - Optional `.srt` or `.txt` upload when automatic lookup is unavailable
 - Local subtitle filtering and per-user caching to reduce repeated input-token usage
 - Saved movie library with vocabulary management
-- Multi-movie quizzes, immediate feedback, scores, and attempt history
+- Five-option multiple-choice practice with part-of-speech-aware distractors
+- A focused Learning Pool plus new, learning, and mastered progress tracking
 - HTMX and native JavaScript interactions without full-page reloads
 
 ## Stack

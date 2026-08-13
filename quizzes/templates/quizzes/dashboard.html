@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Progress | Filmocabulary{% endblock %}
+
+{% block content %}
+<div class="learning-workspace">
+    <header class="section-heading section-heading--with-tools">
+        <div>
+            <p class="eyebrow">Spaced repetition</p>
+            <h1>Your progress</h1>
+            <p class="page-intro">Practice is generated instantly from vocabulary already saved in your film library.</p>
+        </div>
+        <a class="button button--primary" href="{% url 'quizzes:question' 'collection' %}">
+            <i data-lucide="play" aria-hidden="true"></i>
+            Start practice
+        </a>
+    </header>
+
+    <section class="progress-stats" aria-label="Vocabulary progress">
+        <article class="progress-stat progress-stat--mastered">
+            <span>Mastered</span>
+            <strong>{{ progress.mastered }}</strong>
+            <p>Answered correctly</p>
+        </article>
+        <article class="progress-stat progress-stat--learning">
+            <span>Learning</span>
+            <strong>{{ progress.learning }}</strong>
+            <p>Ready for focused review</p>
+        </article>
+        <article class="progress-stat progress-stat--new">
+            <span>New</span>
+            <strong>{{ progress.new }}</strong>
+            <p>Not encountered yet</p>
+        </article>
+        <article class="progress-stat">
+            <span>Collection</span>
+            <strong>{{ progress.total }}</strong>
+            <p>Total saved words</p>
+        </article>
+    </section>
+
+    <section class="learning-actions" aria-labelledby="learning-actions-title">
+        <div>
+            <p class="eyebrow">Focused study</p>
+            <h2 id="learning-actions-title">Learning Pool</h2>
+            <p>Review definitions, examples, and film context for words you missed, then quiz only that pool.</p>
+        </div>
+        <div class="button-row">
+            <a class="button button--secondary" href="{% url 'quizzes:learning_pool' %}">Study {{ progress.learning }} word{{ progress.learning|pluralize }}</a>
+            {% if progress.learning %}
+                <a class="button button--primary" href="{% url 'quizzes:question' 'learning' %}">Quiz my Learning Pool</a>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}

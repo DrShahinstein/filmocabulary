@@ -1,66 +1,41 @@
 from django.test import TestCase
 
-from quizzes.forms import QuizAnswerForm, QuizStartForm
-from quizzes.models import QuizSession
+from quizzes.forms import QuizAnswerForm
+from quizzes.services import generate_question
 
 from .factories import make_movie, make_user, make_vocabulary
 
 
-class QuizStartFormTests(TestCase):
-    def setUp(self):
-        self.user = make_user("learner")
-        self.other_user = make_user("other")
-        self.movie = make_movie(self.user)
-        self.other_movie = make_movie(self.other_user, "Heat", 1995)
-        make_vocabulary(self.movie)
-        make_vocabulary(self.movie, "conundrum", "The case presented a ___.")
-        make_vocabulary(self.other_movie, "elusive", "The lead remained ___.")
-
-    def test_accepts_owned_movies_with_enough_questions(self):
-        form = QuizStartForm(
-            data={"movies": [self.movie.pk], "question_count": 2},
-            user=self.user,
-        )
-
-        self.assertTrue(form.is_valid(), form.errors)
-
-    def test_rejects_another_users_movie(self):
-        form = QuizStartForm(
-            data={"movies": [self.other_movie.pk], "question_count": 1},
-            user=self.user,
-        )
-
-        self.assertFalse(form.is_valid())
-        self.assertIn("movies", form.errors)
-
-    def test_rejects_question_count_above_available_pool(self):
-        form = QuizStartForm(
-            data={"movies": [self.movie.pk], "question_count": 3},
-            user=self.user,
-        )
-
-        self.assertFalse(form.is_valid())
-        self.assertIn("question_count", form.errors)
-
-
 class QuizAnswerFormTests(TestCase):
-    def test_limits_item_to_session_questions(self):
-        user = make_user("learner")
-        movie = make_movie(user)
-        included = make_vocabulary(movie)
-        excluded = make_vocabulary(movie, "conundrum", "The case presented a ___.")
-        session = QuizSession.objects.create(user=user, total_questions=1)
-        session.selected_movies.add(movie)
-        session.questions.add(included)
+    def setUp(self):
+        self.user = make_user("form-learner")
+        movie = make_movie(self.user)
+        for index in range(5):
+            make_vocabulary(
+                movie,
+                word=f"word-{index}",
+                definition=f"Distinct meaning {index}.",
+            )
+        self.question = generate_question(user=self.user)
 
+    def test_form_uses_exactly_the_signed_question_options(self):
+        form = QuizAnswerForm(question=self.question)
+
+        self.assertEqual(len(form.fields["selected_option"].choices), 5)
+        self.assertEqual(
+            {choice[0] for choice in form.fields["selected_option"].choices},
+            {option.vocabulary_item_id for option in self.question.options},
+        )
+        self.assertEqual(form.fields["question_token"].initial, self.question.token)
+
+    def test_form_rejects_an_option_outside_the_question(self):
         form = QuizAnswerForm(
-            data={
-                "vocabulary_item": excluded.pk,
-                "submitted_answer": excluded.word_or_phrase,
+            {
+                "question_token": self.question.token,
+                "selected_option": 999999,
             },
-            session=session,
+            question=self.question,
         )
 
         self.assertFalse(form.is_valid())
-        self.assertIn("vocabulary_item", form.errors)
-
+        self.assertIn("selected_option", form.errors)

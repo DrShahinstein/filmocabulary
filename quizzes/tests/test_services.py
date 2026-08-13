@@ -1,127 +1,340 @@
+import random
+from unittest.mock import patch
+
+from django.core import signing
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
-from movies.models import Movie
-from quizzes.models import QuizAttempt, QuizSession
+from quizzes.models import UserWordStatus
 from quizzes.services import (
-    create_quiz_session,
-    next_unanswered_question,
-    normalize_answer,
-    record_answer,
+    DuplicateAnswerError,
+    QUESTION_SALT,
+    QuizTokenError,
+    QuizUnavailableError,
+    answer_question,
+    generate_question,
+    question_from_token,
 )
 
 from .factories import make_movie, make_user, make_vocabulary
 
 
-class AnswerNormalizationTests(TestCase):
-    def test_normalizes_case_and_runs_of_whitespace(self):
-        self.assertEqual(normalize_answer("  Carry   OUT "), "carry out")
-
-    def test_does_not_discard_punctuation(self):
-        self.assertNotEqual(normalize_answer("carry-out"), normalize_answer("carry out"))
-
-
-class QuizServiceTests(TestCase):
+class QuizEngineTests(TestCase):
     def setUp(self):
-        self.user = make_user("learner")
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.user = make_user("engine-learner")
         self.movie = make_movie(self.user)
-        self.words = [
-            make_vocabulary(self.movie, "meticulous"),
-            make_vocabulary(self.movie, "conundrum", "The case presented a ___."),
-            make_vocabulary(self.movie, "carry out", "They agreed to ___ the plan."),
+        self.verbs = [
+            make_vocabulary(
+                self.movie,
+                word=f"verb-{index}",
+                definition=f"Verb meaning {index}.",
+                word_type="verb",
+            )
+            for index in range(5)
+        ]
+        self.nouns = [
+            make_vocabulary(
+                self.movie,
+                word=f"noun-{index}",
+                definition=f"Noun meaning {index}.",
+                word_type="noun",
+            )
+            for index in range(2)
         ]
 
-    def make_session(self, count=2):
-        session = QuizSession.objects.create(user=self.user, total_questions=count)
-        session.selected_movies.add(self.movie)
-        session.questions.set(self.words[:count])
-        return session
+    def test_generator_builds_five_unique_options_with_one_correct_definition(self):
+        target = self.verbs[0]
 
-    def test_create_session_samples_requested_number_from_owned_movies(self):
-        session = create_quiz_session(
+        question = generate_question(
             user=self.user,
-            movies=Movie.objects.filter(pk=self.movie.pk),
-            question_count=2,
+            target=target,
+            rng=random.Random(4),
         )
 
-        self.assertEqual(session.questions.count(), 2)
-        self.assertEqual(session.total_questions, 2)
-        self.assertEqual(list(session.selected_movies.all()), [self.movie])
-        self.assertTrue(
-            set(session.questions.values_list("pk", flat=True)).issubset(
-                {word.pk for word in self.words}
+        self.assertEqual(len(question.options), 5)
+        self.assertEqual(len({option.definition for option in question.options}), 5)
+        self.assertEqual(
+            sum(option.vocabulary_item_id == target.pk for option in question.options),
+            1,
+        )
+        decoded = question_from_token(user=self.user, token=question.token)
+        self.assertEqual(decoded.target, target)
+
+    def test_distractors_prioritize_the_same_part_of_speech(self):
+        target = self.verbs[0]
+
+        question = generate_question(
+            user=self.user,
+            target=target,
+            rng=random.Random(2),
+        )
+
+        option_ids = {option.vocabulary_item_id for option in question.options}
+        self.assertEqual(option_ids, {item.pk for item in self.verbs})
+
+    def test_distractors_fall_back_to_other_parts_of_speech(self):
+        target = self.nouns[0]
+
+        question = generate_question(
+            user=self.user,
+            target=target,
+            rng=random.Random(5),
+        )
+
+        self.assertEqual(len(question.options), 5)
+        self.assertIn(self.nouns[1].pk, {option.vocabulary_item_id for option in question.options})
+
+    def test_options_never_include_another_users_vocabulary(self):
+        other_user = make_user("engine-outsider")
+        other_movie = make_movie(other_user, "Heat", 1995)
+        outsider = make_vocabulary(other_movie, word="outsider")
+
+        question = generate_question(user=self.user, target=self.verbs[0])
+
+        self.assertNotIn(
+            outsider.pk,
+            {option.vocabulary_item_id for option in question.options},
+        )
+
+    def test_correct_answer_is_shuffled_across_positions(self):
+        positions = {
+            next(
+                index
+                for index, option in enumerate(
+                    generate_question(
+                        user=self.user,
+                        target=self.verbs[0],
+                        rng=random.Random(seed),
+                    ).options
+                )
+                if option.vocabulary_item_id == self.verbs[0].pk
             )
+            for seed in range(8)
+        }
+
+        self.assertGreater(len(positions), 1)
+
+    def test_generator_requires_five_distinct_definitions(self):
+        small_user = make_user("small-library")
+        movie = make_movie(small_user, "Primer", 2004)
+        for index in range(4):
+            make_vocabulary(movie, word=f"term-{index}")
+
+        with self.assertRaisesMessage(QuizUnavailableError, "at least five"):
+            generate_question(user=small_user)
+
+    def test_learning_pool_only_targets_learning_words(self):
+        learning = self.verbs[2]
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=learning,
+            status=UserWordStatus.Status.LEARNING,
+            wrong_count=1,
         )
 
-    def test_record_answer_scores_case_and_whitespace_normalized_answer(self):
-        session = self.make_session(count=1)
-        self.assertEqual(session.status, "active")
-        question = next_unanswered_question(session)
+        question = generate_question(user=self.user, pool="learning")
 
-        result = record_answer(
-            session=session,
-            vocabulary_item=question,
-            submitted_answer=f"  {question.word_or_phrase.upper()}  ",
+        self.assertEqual(question.target, learning)
+        self.assertEqual(question.pool, "learning")
+
+    def test_collection_prioritizes_unencountered_words(self):
+        for item in [*self.verbs, *self.nouns[:-1]]:
+            UserWordStatus.objects.create(
+                user=self.user,
+                vocabulary_item=item,
+                status=UserWordStatus.Status.MASTERED,
+            )
+
+        question = generate_question(user=self.user, pool="collection")
+
+        self.assertEqual(question.target, self.nouns[-1])
+
+    def test_empty_learning_pool_has_clear_error(self):
+        with self.assertRaisesMessage(QuizUnavailableError, "Learning Pool is empty"):
+            generate_question(user=self.user, pool="learning")
+
+
+class AnswerTrackingTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.user = make_user("answer-learner")
+        movie = make_movie(self.user)
+        self.items = [
+            make_vocabulary(
+                movie,
+                word=f"word-{index}",
+                definition=f"Meaning {index}.",
+            )
+            for index in range(5)
+        ]
+
+    def test_wrong_answer_creates_learning_status_and_increments_wrong_count(self):
+        question = generate_question(user=self.user, target=self.items[0])
+        wrong_option = next(
+            option
+            for option in question.options
+            if option.vocabulary_item_id != question.target.pk
         )
 
-        self.assertTrue(result.attempt.is_correct)
-        self.assertTrue(result.is_complete)
-        session.refresh_from_db()
-        self.assertEqual(session.correct_answers, 1)
-        self.assertIsNotNone(session.completed_at)
-        self.assertEqual(session.status, "completed")
-
-    def test_duplicate_submission_returns_original_attempt_without_rescoring(self):
-        session = self.make_session(count=2)
-        question = next_unanswered_question(session)
-        first = record_answer(
-            session=session,
-            vocabulary_item=question,
-            submitted_answer=question.word_or_phrase,
-        )
-        duplicate = record_answer(
-            session=session,
-            vocabulary_item=question,
-            submitted_answer="unrelated",
+        result = answer_question(
+            user=self.user,
+            token=question.token,
+            selected_item_id=wrong_option.vocabulary_item_id,
         )
 
-        self.assertTrue(first.created)
-        self.assertFalse(duplicate.created)
-        self.assertEqual(duplicate.attempt.pk, first.attempt.pk)
-        self.assertEqual(QuizAttempt.objects.filter(session=session).count(), 1)
-        session.refresh_from_db()
-        self.assertEqual(session.correct_answers, 1)
+        self.assertFalse(result.is_correct)
+        self.assertEqual(result.word_status.status, UserWordStatus.Status.LEARNING)
+        self.assertEqual(result.word_status.wrong_count, 1)
+        self.assertEqual(result.word_status.correct_count, 0)
+        self.assertIsNotNone(result.word_status.last_tested_at)
 
-    def test_cannot_skip_the_current_question(self):
-        session = self.make_session(count=2)
-        current = next_unanswered_question(session)
-        later = session.questions.exclude(pk=current.pk).get()
+    def test_correct_answer_promotes_word_to_mastered(self):
+        status = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[0],
+            status=UserWordStatus.Status.LEARNING,
+            wrong_count=2,
+        )
+        question = generate_question(
+            user=self.user,
+            pool="learning",
+            target=self.items[0],
+        )
+
+        result = answer_question(
+            user=self.user,
+            token=question.token,
+            selected_item_id=self.items[0].pk,
+        )
+
+        status.refresh_from_db()
+        self.assertTrue(result.is_correct)
+        self.assertEqual(status.status, UserWordStatus.Status.MASTERED)
+        self.assertEqual(status.correct_count, 1)
+        self.assertEqual(status.wrong_count, 2)
+
+    def test_wrong_answer_demotes_mastered_word_to_learning(self):
+        status = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[0],
+            status=UserWordStatus.Status.MASTERED,
+            correct_count=1,
+        )
+        question = generate_question(user=self.user, target=self.items[0])
+        wrong_id = next(
+            option.vocabulary_item_id
+            for option in question.options
+            if option.vocabulary_item_id != self.items[0].pk
+        )
+
+        answer_question(user=self.user, token=question.token, selected_item_id=wrong_id)
+
+        status.refresh_from_db()
+        self.assertEqual(status.status, UserWordStatus.Status.LEARNING)
+        self.assertEqual(status.wrong_count, 1)
+
+    def test_question_cannot_be_scored_twice(self):
+        question = generate_question(user=self.user, target=self.items[0])
+        answer_question(
+            user=self.user,
+            token=question.token,
+            selected_item_id=self.items[0].pk,
+        )
+
+        with self.assertRaises(DuplicateAnswerError):
+            answer_question(
+                user=self.user,
+                token=question.token,
+                selected_item_id=self.items[0].pk,
+            )
+
+        self.assertEqual(
+            UserWordStatus.objects.get(user=self.user).correct_count,
+            1,
+        )
+
+    def test_tampered_question_is_rejected(self):
+        question = generate_question(user=self.user)
+        tampered = f"{question.token}x"
+
+        with self.assertRaises(QuizTokenError):
+            answer_question(
+                user=self.user,
+                token=tampered,
+                selected_item_id=self.items[0].pk,
+            )
+
+    def test_failed_status_write_does_not_consume_question(self):
+        question = generate_question(user=self.user, target=self.items[0])
+        with patch.object(
+            UserWordStatus,
+            "save",
+            side_effect=IntegrityError("write failed"),
+        ):
+            with self.assertRaises(IntegrityError):
+                answer_question(
+                    user=self.user,
+                    token=question.token,
+                    selected_item_id=self.items[0].pk,
+                )
+
+        result = answer_question(
+            user=self.user,
+            token=question.token,
+            selected_item_id=self.items[0].pk,
+        )
+
+        self.assertTrue(result.is_correct)
+
+    def test_signed_question_cannot_reference_another_users_word(self):
+        other = make_user("answer-outsider")
+        other_movie = make_movie(other, "Heat", 1995)
+        outsider = make_vocabulary(other_movie, word="outsider")
+        option_ids = [item.pk for item in self.items[:4]] + [outsider.pk]
+        token = signing.dumps(
+            {
+                "target": self.items[0].pk,
+                "options": option_ids,
+                "pool": "collection",
+            },
+            salt=QUESTION_SALT,
+        )
+
+        with self.assertRaises(QuizTokenError):
+            question_from_token(user=self.user, token=token)
+
+
+class UserWordStatusModelTests(TestCase):
+    def setUp(self):
+        self.user = make_user("model-learner")
+        self.other = make_user("model-other")
+        self.movie = make_movie(self.user)
+        self.item = make_vocabulary(self.movie)
+
+    def test_user_and_vocabulary_item_are_unique(self):
+        UserWordStatus.objects.create(user=self.user, vocabulary_item=self.item)
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            UserWordStatus.objects.create(user=self.user, vocabulary_item=self.item)
+
+    def test_model_validation_rejects_vocabulary_outside_users_library(self):
+        status = UserWordStatus(user=self.other, vocabulary_item=self.item)
 
         with self.assertRaises(ValidationError):
-            record_answer(
-                session=session,
-                vocabulary_item=later,
-                submitted_answer=later.word_or_phrase,
-            )
+            status.full_clean()
 
-        self.assertFalse(session.attempts.exists())
-
-    def test_database_rejects_duplicate_attempt_for_same_item(self):
-        session = self.make_session(count=1)
-        question = next_unanswered_question(session)
-        QuizAttempt.objects.create(
-            session=session,
-            vocabulary_item=question,
-            submitted_answer="first",
-            is_correct=False,
+    def test_deleting_vocabulary_cascades_status(self):
+        status = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.item,
+            status=UserWordStatus.Status.LEARNING,
         )
 
-        with self.assertRaises(IntegrityError):
-            with transaction.atomic():
-                QuizAttempt.objects.create(
-                    session=session,
-                    vocabulary_item=question,
-                    submitted_answer="second",
-                    is_correct=False,
-                )
+        self.item.delete()
+
+        self.assertFalse(UserWordStatus.objects.filter(pk=status.pk).exists())

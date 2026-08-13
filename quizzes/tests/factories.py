@@ -20,14 +20,22 @@ def make_movie(user, title="Arrival", release_year=2016):
     )
 
 
-def make_vocabulary(movie, word="meticulous", sentence=None):
+def make_vocabulary(
+    movie,
+    word="meticulous",
+    sentence=None,
+    *,
+    definition=None,
+    word_type="adjective",
+    cefr_level="C1",
+):
     sentence = sentence or f"Her ___ notes made the pattern clear."
     return VocabularyItem.objects.create(
         movie=movie,
         word_or_phrase=word,
-        type="adjective",
-        cefr_level="C1",
-        definition_en="Showing careful attention to detail.",
+        type=word_type,
+        cefr_level=cefr_level,
+        definition_en=definition or f"Definition of {word}.",
         example_sentence=sentence.replace("___", word),
         blank_sentence=sentence,
     )

@@ -4,9 +4,8 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
-from django.utils import timezone
 
-from quizzes.models import QuizAttempt, QuizSession
+from quizzes.models import UserWordStatus
 from vocabulary.models import VocabularyItem
 
 from .models import Movie
@@ -170,19 +169,11 @@ class MovieDeletionTests(TestCase):
             example_sentence="Investigators scrutinize every detail.",
             blank_sentence="Investigators ___ every detail.",
         )
-        self.quiz = QuizSession.objects.create(
+        self.word_status = UserWordStatus.objects.create(
             user=self.user,
-            total_questions=1,
-            correct_answers=1,
-            completed_at=timezone.now(),
-        )
-        self.quiz.selected_movies.add(self.movie)
-        self.quiz.questions.add(self.item)
-        QuizAttempt.objects.create(
-            session=self.quiz,
             vocabulary_item=self.item,
-            submitted_answer="scrutinize",
-            is_correct=True,
+            status=UserWordStatus.Status.MASTERED,
+            correct_count=1,
         )
         self.client.force_login(self.user)
 
@@ -195,7 +186,9 @@ class MovieDeletionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Movie.objects.filter(pk=self.movie.pk).exists())
         self.assertFalse(VocabularyItem.objects.filter(pk=self.item.pk).exists())
-        self.assertFalse(QuizSession.objects.filter(pk=self.quiz.pk).exists())
+        self.assertFalse(
+            UserWordStatus.objects.filter(pk=self.word_status.pk).exists()
+        )
         self.assertContains(response, 'id="movie-library"')
         self.assertContains(response, "Your library is empty")
         self.assertEqual(

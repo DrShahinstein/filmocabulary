@@ -86,21 +86,25 @@
             {% include "partials/movie_library.html" %}
         </section>
 
-        <aside class="tool-panel quiz-panel" aria-labelledby="quiz-builder-title">
+        <aside class="tool-panel quiz-panel" aria-labelledby="practice-title">
             <div class="tool-panel__heading">
                 <span class="tool-panel__icon tool-panel__icon--gold" aria-hidden="true"><i data-lucide="puzzle"></i></span>
                 <div>
-                    <p class="eyebrow">Recall practice</p>
-                    <h2 id="quiz-builder-title">Build a quiz</h2>
+                    <p class="eyebrow">Spaced repetition</p>
+                    <h2 id="practice-title">Practice vocabulary</h2>
                 </div>
             </div>
 
-            <div id="quiz-launch-region"
-                 aria-live="polite"
-                 hx-get="{% url 'quizzes:builder' %}"
-                 hx-trigger="vocabularyChanged from:body"
-                 hx-swap="innerHTML">
-                {% include "partials/quiz_start_form.html" with form=quiz_form %}
+            <div class="practice-launcher">
+                <p>Test saved vocabulary with fast, five-option questions built from your library.</p>
+                <a class="button button--primary" href="{% url 'quizzes:question' 'collection' %}">
+                    <i data-lucide="play" aria-hidden="true"></i>
+                    Practice collection
+                </a>
+                <a class="button button--secondary" href="{% url 'quizzes:learning_pool' %}">
+                    <i data-lucide="repeat-2" aria-hidden="true"></i>
+                    Open Learning Pool
+                </a>
             </div>
         </aside>
     </div>
