@@ -14,7 +14,7 @@ class VocabularyGenerationForm(forms.Form):
         widget=forms.TextInput(
             attrs={
                 "autocomplete": "off",
-                "placeholder": "e.g. Zodiac",
+                "placeholder": "The Matrix",
                 "autofocus": True,
             }
         ),
@@ -23,7 +23,7 @@ class VocabularyGenerationForm(forms.Form):
         required=False,
         min_value=1888,
         max_value=current_year(),
-        widget=forms.NumberInput(attrs={"placeholder": "2007"}),
+        widget=forms.NumberInput(attrs={"placeholder": "1999"}),
     )
     item_count = forms.IntegerField(
         min_value=1,

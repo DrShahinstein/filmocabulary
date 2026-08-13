@@ -5,6 +5,18 @@ from vocabulary.forms import GenerateVocabularyForm, VocabularyGenerationForm
 
 
 class VocabularyGenerationFormTests(SimpleTestCase):
+    def test_movie_fields_use_matrix_placeholders(self):
+        form = VocabularyGenerationForm()
+
+        self.assertEqual(
+            form.fields["title"].widget.attrs["placeholder"],
+            "The Matrix",
+        )
+        self.assertEqual(
+            form.fields["release_year"].widget.attrs["placeholder"],
+            "1999",
+        )
+
     def test_compatibility_alias_points_to_public_form(self):
         self.assertIs(GenerateVocabularyForm, VocabularyGenerationForm)
 
