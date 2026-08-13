@@ -26,10 +26,7 @@ multi-movie fill-in-the-blank quizzes.
 
 ## Local Setup
 
-The default dependency set uses SQLite and works without PostgreSQL, Redis, Gunicorn,
-or local C/Rust build tools. Python 3.12 is recommended; Python 3.11 or newer is
-supported. Upgrade `pip` inside the new environment so it recognizes current binary
-wheels before installing dependencies.
+Make sure you've configured `.env` before running the server.
 
 ### Linux and macOS
 
@@ -38,7 +35,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-cp .env.example .env
 python manage.py migrate
 python manage.py runserver
 ```
@@ -50,55 +46,37 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
 python manage.py migrate
 python manage.py runserver
 ```
 
-If PowerShell blocks activation, either allow locally created scripts for the current
-user (`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`) or invoke the environment's
-Python directly as `.\.venv\Scripts\python.exe`.
-
-### Windows Command Prompt
-
-```bat
-py -3.12 -m venv .venv
-.venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-copy .env.example .env
-python manage.py migrate
-python manage.py runserver
-```
-
-Open <http://127.0.0.1:8000/> and create an account.
+If PowerShell blocks activation:
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
 
 ## Configuration
 
-`DJANGO_SECRET_KEY` is mandatory. Generate a local value instead of using the placeholder
-from `.env.example`.
+Vocabulary generation is powered by an LLM. To use it, connect your own model with its API key.
 
-Select one vocabulary provider in `.env`:
-
+Example:
 ```dotenv
+# .env
+...
 VOCABULARY_LLM_PROVIDER=fireworks
 FIREWORKS_API_KEY=your-key
+...
 ```
 
-Supported values are `openai`, `gemini`, and `fireworks`. Only the selected provider's
-API key is required.
-
-Automatic subtitle grounding is optional:
-
+Automatic subtitle grounding is optional but also recommended:
 ```dotenv
+# .env
+...
 VOCABULARY_AUTO_SOURCE_PROVIDER=opensubtitles
 OPENSUBTITLES_API_KEY=your-key
 OPENSUBTITLES_USER_AGENT=Filmocabulary v1.0
+...
 ```
 
-Set `VOCABULARY_AUTO_SOURCE_PROVIDER=` to disable automatic lookup. Users can still
-upload `.srt` or `.txt` source files, and generation falls back to model knowledge when
-no source is available.
+Set `VOCABULARY_AUTO_SOURCE_PROVIDER=` to disable automatic lookup. Users can still upload `.srt` or `.txt` source files, and generation falls back to model knowledge when no source is available.
 
 Never commit `.env` or paste API keys into logs, issues, or chat messages.
 
