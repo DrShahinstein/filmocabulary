@@ -1,0 +1,12 @@
+# Install this manifest in addition to the cross-platform application stack.
+-r requirements.txt
+
+# Gunicorn is a POSIX WSGI server and is intentionally omitted on Windows.
+gunicorn>=23,<24; platform_system != "Windows"
+
+# The binary extra selects Psycopg's pre-built implementation instead of
+# requiring a local compiler or PostgreSQL client development headers.
+psycopg[binary]>=3.2,<4
+
+# Required only when CACHE_URL selects a Redis cache in production.
+redis>=5,<7

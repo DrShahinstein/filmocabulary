@@ -26,19 +26,52 @@ multi-movie fill-in-the-blank quizzes.
 
 ## Local Setup
 
+The default dependency set uses SQLite and works without PostgreSQL, Redis, Gunicorn,
+or local C/Rust build tools. Python 3.12 is recommended; Python 3.11 or newer is
+supported. Upgrade `pip` inside the new environment so it recognizes current binary
+wheels before installing dependencies.
+
+### Linux and macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+cp .env.example .env
+python manage.py migrate
+python manage.py runserver
+```
+
+### Windows PowerShell
+
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 python manage.py migrate
 python manage.py runserver
 ```
 
-Open <http://127.0.0.1:8000/> and create an account.
+If PowerShell blocks activation, either allow locally created scripts for the current
+user (`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`) or invoke the environment's
+Python directly as `.\.venv\Scripts\python.exe`.
 
-On macOS or Linux, activate the environment with `source .venv/bin/activate` and copy
-the environment template with `cp .env.example .env`.
+### Windows Command Prompt
+
+```bat
+py -3.12 -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+copy .env.example .env
+python manage.py migrate
+python manage.py runserver
+```
+
+Open <http://127.0.0.1:8000/> and create an account.
 
 ## Configuration
 
@@ -117,6 +150,16 @@ Production settings require `DJANGO_SETTINGS_MODULE=config.settings.production`,
 `DATABASE_URL`, `ALLOWED_HOSTS`, and a strong `DJANGO_SECRET_KEY`. Static files are served
 through WhiteNoise, and secure cookies, HTTPS redirect, HSTS, and other Django security
 headers are enabled.
+
+Production-only dependencies are kept out of the local SQLite setup. Install them with:
+
+```bash
+python -m pip install -r requirements-production.txt
+```
+
+`requirements-production.txt` uses Psycopg's binary distribution to avoid compiler and
+PostgreSQL-header requirements. Gunicorn is installed only on POSIX systems because it
+does not support Windows; Windows remains fully supported for local Django development.
 
 ```bash
 python manage.py migrate
