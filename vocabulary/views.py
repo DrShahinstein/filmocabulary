@@ -1,15 +1,18 @@
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db.models import CharField, Exists, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce, Lower
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
-from django.views.generic import TemplateView
+from django.views.generic import ListView, TemplateView
 from django_ratelimit.decorators import ratelimit
 
 from movies.models import Movie
+from quizzes.models import UserWordStatus
 
-from .forms import GenerateVocabularyForm
+from .forms import GenerateVocabularyForm, VocabularyExplorerFilterForm
 from .models import VocabularyItem
 from .services import (
     VocabularyGenerationResult,
@@ -21,6 +24,10 @@ from .services import (
 
 
 GENERATION_RATE = getattr(settings, "VOCABULARY_GENERATION_RATE", "5/h")
+
+
+def _is_htmx(request: HttpRequest) -> bool:
+    return request.headers.get("HX-Request") == "true"
 
 
 def _counted(count: int, singular: str, plural: str | None = None) -> str:
@@ -77,6 +84,77 @@ class VocabularyListView(LoginRequiredMixin, TemplateView):
             "vocabulary_items"
         )
         context["form"] = GenerateVocabularyForm()
+        return context
+
+
+class VocabularyExplorerView(LoginRequiredMixin, ListView):
+    context_object_name = "items"
+    paginate_by = 24
+
+    def get_template_names(self):
+        if _is_htmx(self.request):
+            return ("partials/word_explorer_results.html",)
+        return ("vocabulary/words_explorer.html",)
+
+    def get_filter_form(self):
+        if not hasattr(self, "filter_form"):
+            self.filter_form = VocabularyExplorerFilterForm(
+                self.request.GET,
+                user=self.request.user,
+            )
+        return self.filter_form
+
+    def get_queryset(self):
+        status_for_user = UserWordStatus.objects.filter(
+            user=self.request.user,
+            vocabulary_item_id=OuterRef("pk"),
+        ).order_by()
+        queryset = (
+            VocabularyItem.objects.filter(movie__user=self.request.user)
+            .select_related("movie")
+            .annotate(
+                learning_status=Coalesce(
+                    Subquery(status_for_user.values("status")[:1]),
+                    Value(UserWordStatus.Status.NEW),
+                    output_field=CharField(),
+                ),
+                is_saved_for_user=Exists(status_for_user.filter(is_saved=True)),
+            )
+        )
+
+        form = self.get_filter_form()
+        if not form.is_valid():
+            return queryset.none()
+
+        query = form.cleaned_data["q"]
+        if query:
+            queryset = queryset.filter(
+                Q(word_or_phrase__icontains=query)
+                | Q(definition_en__icontains=query)
+                | Q(example_sentence__icontains=query)
+            )
+
+        status = form.cleaned_data["status"]
+        if status == "saved":
+            queryset = queryset.filter(is_saved_for_user=True)
+        elif status:
+            queryset = queryset.filter(learning_status=status)
+
+        if word_type := form.cleaned_data["type"]:
+            queryset = queryset.filter(type=word_type)
+        if movie := form.cleaned_data["movie"]:
+            queryset = queryset.filter(movie=movie)
+        if cefr_levels := form.cleaned_data["cefr"]:
+            queryset = queryset.filter(cefr_level__in=cefr_levels)
+
+        return queryset.order_by(Lower("word_or_phrase"), "movie__title", "pk")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["filter_form"] = self.get_filter_form()
+        query_parameters = self.request.GET.copy()
+        query_parameters.pop("page", None)
+        context["filter_query"] = query_parameters.urlencode()
         return context
 
 

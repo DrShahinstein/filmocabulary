@@ -1,0 +1,47 @@
+<section id="word-results" class="word-results" aria-live="polite" aria-busy="false">
+    {% if filter_form.errors %}
+        <div class="form-alert" role="alert">
+            <i data-lucide="circle-alert" aria-hidden="true"></i>
+            <span>Choose valid filters and try again.</span>
+        </div>
+    {% elif items %}
+        <div class="word-results__summary">
+            <p><strong>{{ page_obj.paginator.count }}</strong> matching word{{ page_obj.paginator.count|pluralize }}</p>
+            <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        </div>
+        <div class="word-card-grid">
+            {% for item in items %}
+                {% include "partials/word_explorer_card.html" %}
+            {% endfor %}
+        </div>
+
+        {% if is_paginated %}
+            <nav class="pagination" aria-label="Words pagination">
+                {% if page_obj.has_previous %}
+                    <a class="button button--secondary button--small"
+                       href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ page_obj.previous_page_number }}"
+                       hx-get="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ page_obj.previous_page_number }}"
+                       hx-target="#word-results"
+                       hx-swap="outerHTML"
+                       hx-push-url="true">Previous</a>
+                {% endif %}
+                <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                {% if page_obj.has_next %}
+                    <a class="button button--secondary button--small"
+                       href="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ page_obj.next_page_number }}"
+                       hx-get="?{% if filter_query %}{{ filter_query }}&amp;{% endif %}page={{ page_obj.next_page_number }}"
+                       hx-target="#word-results"
+                       hx-swap="outerHTML"
+                       hx-push-url="true">Next</a>
+                {% endif %}
+            </nav>
+        {% endif %}
+    {% else %}
+        <div class="empty-state">
+            <i data-lucide="search-x" aria-hidden="true"></i>
+            <h2>No matching words</h2>
+            <p>Try a broader search or clear one of the filters.</p>
+            <a class="button button--secondary" href="{% url 'words:index' %}">Clear filters</a>
+        </div>
+    {% endif %}
+</section>

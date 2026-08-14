@@ -5,6 +5,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/", include("django.contrib.auth.urls")),
     path("accounts/", include("accounts.urls")),
+    path("words/", include("vocabulary.words_urls")),
     path("vocabulary/", include("vocabulary.urls")),
     path("quizzes/", include("quizzes.urls")),
     path("", include("movies.urls")),

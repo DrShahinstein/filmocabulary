@@ -1,10 +1,66 @@
 from django import forms
 from django.conf import settings
+from django.db.models.functions import Lower
 
-from movies.models import current_year
+from movies.models import Movie, current_year
 
 from .constants import MAX_GENERATION_ITEMS
 from .ingestion import SourceDocument, SourceIngestionError, parse_uploaded_source
+from .models import VocabularyItem
+
+
+class VocabularyExplorerFilterForm(forms.Form):
+    STATUS_CHOICES = (
+        ("", "All statuses"),
+        ("new", "New"),
+        ("learning", "Learning"),
+        ("mastered", "Mastered"),
+        ("saved", "Saved"),
+    )
+
+    q = forms.CharField(
+        required=False,
+        max_length=255,
+        label="Search",
+        widget=forms.SearchInput(
+            attrs={
+                "autocomplete": "off",
+                "placeholder": "Search words and definitions",
+            }
+        ),
+    )
+    status = forms.ChoiceField(
+        required=False,
+        choices=STATUS_CHOICES,
+        label="Status",
+    )
+    type = forms.ChoiceField(
+        required=False,
+        choices=(("", "All types"), *VocabularyItem.Type.choices),
+        label="Type",
+    )
+    movie = forms.ModelChoiceField(
+        required=False,
+        queryset=Movie.objects.none(),
+        empty_label="All movies",
+        label="Movie",
+    )
+    cefr = forms.MultipleChoiceField(
+        required=False,
+        choices=VocabularyItem.CefrLevel.choices,
+        widget=forms.CheckboxSelectMultiple,
+        label="CEFR level",
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if user is not None:
+            self.fields["movie"].queryset = Movie.objects.filter(user=user).order_by(
+                Lower("title"), "pk"
+            )
+
+    def clean_q(self):
+        return " ".join(self.cleaned_data["q"].split())
 
 
 class VocabularyGenerationForm(forms.Form):

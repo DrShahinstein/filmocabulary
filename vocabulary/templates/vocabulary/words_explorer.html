@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Words | Filmocabulary{% endblock %}
+
+{% block content %}
+<div class="words-workspace">
+    <header class="section-heading section-heading--with-tools">
+        <div>
+            <p class="eyebrow">Vocabulary bank</p>
+            <h1>Words Explorer</h1>
+            <p class="page-intro">Search and filter every word collected from your films.</p>
+        </div>
+        <a class="button button--primary" href="{% url 'quizzes:question' 'collection' %}">
+            <i data-lucide="play" aria-hidden="true"></i>
+            Practice all
+        </a>
+    </header>
+
+    <form class="words-filter"
+          method="get"
+          action="{% url 'words:index' %}"
+          hx-get="{% url 'words:index' %}"
+          hx-target="#word-results"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+          hx-trigger="input delay:300ms">
+        <div class="form-field words-filter__search">
+            <label for="{{ filter_form.q.id_for_label }}">{{ filter_form.q.label }}</label>
+            <div class="words-search-control">
+                <i data-lucide="search" aria-hidden="true"></i>
+                {{ filter_form.q }}
+            </div>
+        </div>
+        <div class="form-field">
+            <label for="{{ filter_form.status.id_for_label }}">{{ filter_form.status.label }}</label>
+            {{ filter_form.status }}
+        </div>
+        <div class="form-field">
+            <label for="{{ filter_form.type.id_for_label }}">{{ filter_form.type.label }}</label>
+            {{ filter_form.type }}
+        </div>
+        <div class="form-field">
+            <label for="{{ filter_form.movie.id_for_label }}">{{ filter_form.movie.label }}</label>
+            {{ filter_form.movie }}
+        </div>
+        <fieldset class="words-filter__levels">
+            <legend>{{ filter_form.cefr.label }}</legend>
+            {{ filter_form.cefr }}
+        </fieldset>
+        <div class="words-filter__actions">
+            <button class="button button--secondary" type="submit">Apply filters</button>
+            <a class="button button--quiet" href="{% url 'words:index' %}">Clear</a>
+        </div>
+    </form>
+
+    {% include "partials/word_explorer_results.html" %}
+</div>
+{% endblock %}

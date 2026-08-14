@@ -41,6 +41,12 @@
                             <i data-lucide="library-big" aria-hidden="true"></i>
                             <span>Library</span>
                         </a>
+                        <a class="primary-nav__link{% if request.resolver_match.namespace == 'words' %} is-active{% endif %}"
+                           href="{% url 'words:index' %}"
+                           {% if request.resolver_match.namespace == 'words' %}aria-current="page"{% endif %}>
+                            <i data-lucide="book-open-text" aria-hidden="true"></i>
+                            <span>Words</span>
+                        </a>
                         <a class="primary-nav__link{% if request.resolver_match.namespace == 'quizzes' %} is-active{% endif %}"
                            href="{% url 'quizzes:dashboard' %}"
                            {% if request.resolver_match.namespace == 'quizzes' %}aria-current="page"{% endif %}>
@@ -95,6 +101,12 @@
                    {% if request.resolver_match.namespace == 'movies' or request.resolver_match.namespace == 'vocabulary' %}aria-current="page"{% endif %}>
                     <i data-lucide="library-big" aria-hidden="true"></i>
                     <span>Library</span>
+                </a>
+                <a class="mobile-nav__link{% if request.resolver_match.namespace == 'words' %} is-active{% endif %}"
+                   href="{% url 'words:index' %}"
+                   {% if request.resolver_match.namespace == 'words' %}aria-current="page"{% endif %}>
+                    <i data-lucide="book-open-text" aria-hidden="true"></i>
+                    <span>Words</span>
                 </a>
                 <a class="mobile-nav__link{% if request.resolver_match.namespace == 'quizzes' %} is-active{% endif %}"
                    href="{% url 'quizzes:dashboard' %}"

@@ -1,0 +1,16 @@
+<article class="learning-card word-card">
+    <header class="learning-card__header">
+        <div>
+            <span class="level-badge level-badge--{{ item.cefr_level|lower }}">{{ item.cefr_level }}</span>
+            <span class="status-badge">{{ item.get_type_display }}</span>
+            <span class="status-badge status-badge--{{ item.learning_status }}">{{ item.learning_status|capfirst }}</span>
+            <h2>{{ item.word_or_phrase }}</h2>
+        </div>
+        <div class="saved-card__tools">
+            <span class="learning-card__movie">{{ item.movie.title }}{% if item.movie.release_year %} ({{ item.movie.release_year }}){% endif %}</span>
+            {% include "partials/bookmark_button.html" with item=item is_saved=item.is_saved_for_user %}
+        </div>
+    </header>
+    <p class="learning-card__definition">{{ item.definition_en }}</p>
+    <blockquote>{{ item.example_sentence }}</blockquote>
+</article>

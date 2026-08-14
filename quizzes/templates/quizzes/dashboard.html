@@ -11,7 +11,7 @@
             <p class="page-intro">Practice is generated instantly from vocabulary already saved in your film library.</p>
         </div>
         <div class="button-row">
-            <a class="button button--secondary" href="{% url 'quizzes:saved_words' %}">
+            <a class="button button--secondary" href="{% url 'words:index' %}?status=saved">
                 <i data-lucide="bookmark" aria-hidden="true"></i>
                 Saved words ({{ saved_count }})
             </a>
@@ -23,26 +23,34 @@
     </header>
 
     <section class="progress-stats" aria-label="Vocabulary progress">
-        <article class="progress-stat progress-stat--mastered">
+        <a class="progress-stat progress-stat--mastered"
+           href="{% url 'words:index' %}?status=mastered"
+           aria-label="Explore {{ progress.mastered }} mastered words">
             <span>Mastered</span>
             <strong>{{ progress.mastered }}</strong>
             <p>Answered correctly</p>
-        </article>
-        <article class="progress-stat progress-stat--learning">
+        </a>
+        <a class="progress-stat progress-stat--learning"
+           href="{% url 'words:index' %}?status=learning"
+           aria-label="Explore {{ progress.learning }} learning words">
             <span>Learning</span>
             <strong>{{ progress.learning }}</strong>
             <p>Ready for focused review</p>
-        </article>
-        <article class="progress-stat progress-stat--new">
+        </a>
+        <a class="progress-stat progress-stat--new"
+           href="{% url 'words:index' %}?status=new"
+           aria-label="Explore {{ progress.new }} new words">
             <span>New</span>
             <strong>{{ progress.new }}</strong>
             <p>Not encountered yet</p>
-        </article>
-        <article class="progress-stat">
+        </a>
+        <a class="progress-stat"
+           href="{% url 'words:index' %}"
+           aria-label="Explore all {{ progress.total }} words">
             <span>Collection</span>
             <strong>{{ progress.total }}</strong>
             <p>Total saved words</p>
-        </article>
+        </a>
     </section>
 
     <section class="practice-filter" aria-labelledby="practice-filter-title">

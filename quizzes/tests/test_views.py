@@ -59,6 +59,16 @@ class QuizViewTests(TestCase):
         self.assertContains(response, "Practice by movie")
         self.assertContains(response, "Saved words (0)")
         self.assertNotContains(response, "Quiz history")
+        self.assertContains(
+            response,
+            f'{reverse("words:index")}?status=mastered',
+        )
+        self.assertContains(
+            response,
+            f'{reverse("words:index")}?status=learning',
+        )
+        self.assertContains(response, f'{reverse("words:index")}?status=new')
+        self.assertContains(response, f'{reverse("words:index")}?status=saved')
 
     def test_learning_pool_lists_only_current_users_learning_words(self):
         learning = UserWordStatus.objects.create(

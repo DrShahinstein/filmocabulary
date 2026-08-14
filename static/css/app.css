@@ -1515,8 +1515,17 @@ textarea::placeholder {
     border: 1px solid var(--line);
     border-top: 3px solid var(--pine);
     border-radius: var(--radius);
+    color: inherit;
     background: var(--surface);
     box-shadow: var(--shadow-sm);
+    text-decoration: none;
+    transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.progress-stat:hover {
+    color: inherit;
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
 }
 
 .progress-stat--mastered {
@@ -1723,6 +1732,155 @@ textarea::placeholder {
     margin-top: 22px;
     color: var(--muted);
     font-size: 0.82rem;
+}
+
+/* Searchable vocabulary bank */
+.words-workspace {
+    display: grid;
+    gap: 24px;
+}
+
+.words-filter {
+    display: grid;
+    grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(150px, 1fr));
+    align-items: end;
+    gap: 16px;
+    padding: 20px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+}
+
+.words-search-control {
+    position: relative;
+}
+
+.words-search-control > svg {
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    left: 11px;
+    width: 18px;
+    height: 18px;
+    color: var(--muted);
+    pointer-events: none;
+    transform: translateY(-50%);
+}
+
+.words-search-control input {
+    padding-left: 38px;
+}
+
+.words-filter__levels {
+    grid-column: 1 / span 3;
+    padding: 0;
+    border: 0;
+}
+
+.words-filter__levels legend {
+    margin-bottom: 6px;
+    color: var(--ink-soft);
+    font-size: 0.79rem;
+    font-weight: 750;
+}
+
+.words-filter__levels > div,
+.words-filter__levels > ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
+.words-filter__levels > div > div {
+    display: contents;
+}
+
+.words-filter__levels label {
+    display: inline-flex;
+    min-height: 38px;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    color: var(--ink-soft);
+    background: var(--surface-soft);
+    font-size: 0.82rem;
+    font-weight: 750;
+    cursor: pointer;
+}
+
+.words-filter__levels label:has(input:checked) {
+    border-color: var(--pine);
+    color: var(--pine-deep);
+    background: var(--pine-soft);
+}
+
+.words-filter__levels input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--pine);
+}
+
+.words-filter__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.word-results {
+    min-height: 180px;
+}
+
+.word-results__summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.word-results__summary p {
+    margin: 0;
+}
+
+.word-results__summary strong {
+    color: var(--ink);
+}
+
+.word-card-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.word-card {
+    min-width: 0;
+    border-left-color: var(--pine);
+}
+
+.word-card .learning-card__movie {
+    max-width: 240px;
+    text-align: right;
+}
+
+.status-badge--learning {
+    border-color: #e8aaa4;
+    color: var(--coral-deep);
+    background: var(--coral-soft);
+}
+
+.status-badge--mastered {
+    border-color: #aad0bf;
+    color: var(--success);
+    background: var(--success-soft);
 }
 
 /* Vocabulary fragments returned into the generation workspace */
@@ -1983,6 +2141,19 @@ textarea::placeholder {
     .progress-stats {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+
+    .words-filter {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .words-filter__levels {
+        grid-column: 1;
+    }
+
+    .words-filter__actions {
+        grid-column: 2;
+    }
+
     .brand {
         min-width: 0;
     }
@@ -2058,7 +2229,7 @@ textarea::placeholder {
         left: 0;
         display: grid;
         height: 66px;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(4, 1fr);
         border-top: 1px solid var(--line);
         background: rgb(255 255 255 / 97%);
         box-shadow: 0 -8px 24px rgb(20 33 29 / 7%);
@@ -2155,6 +2326,10 @@ textarea::placeholder {
     .vocabulary-generator > .generation-result {
         grid-column: 1;
     }
+
+    .word-card-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 560px) {
@@ -2176,6 +2351,25 @@ textarea::placeholder {
     .saved-card__tools {
         justify-items: start;
     }
+
+    .words-filter {
+        grid-template-columns: 1fr;
+    }
+
+    .words-filter__levels,
+    .words-filter__actions {
+        grid-column: 1;
+    }
+
+    .words-filter__actions {
+        justify-content: flex-start;
+    }
+
+    .word-card .learning-card__movie {
+        max-width: none;
+        text-align: left;
+    }
+
     .app-container,
     .app-header__inner {
         width: min(100% - 22px, var(--container));

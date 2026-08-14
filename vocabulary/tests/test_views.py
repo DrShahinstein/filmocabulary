@@ -480,6 +480,178 @@ class VocabularyViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def test_words_explorer_requires_login_and_scopes_items_to_owner(self):
+        other_movie = Movie.objects.create(
+            user=self.other_user,
+            title="Heat",
+            release_year=1995,
+        )
+        outsider = VocabularyItem.objects.create(
+            **vocabulary_item_fields(movie=other_movie, word="outsider")
+        )
+        url = reverse("words:index")
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "vocabulary/words_explorer.html")
+        self.assertContains(response, self.item.word_or_phrase)
+        self.assertNotContains(response, outsider.word_or_phrase)
+
+        self.client.logout()
+        response = self.client.get(url)
+        self.assertRedirects(response, f"{reverse('login')}?next={url}")
+
+    def test_words_explorer_searches_term_definition_and_context(self):
+        phrase = VocabularyItem.objects.create(
+            movie=self.movie,
+            word_or_phrase="read between the lines",
+            type=VocabularyItem.Type.IDIOM,
+            cefr_level=VocabularyItem.CefrLevel.C1,
+            definition_en="Infer a concealed meaning.",
+            example_sentence="She could read between the lines of his denial.",
+            blank_sentence="She could ___ of his denial.",
+        )
+
+        for query in ("between", "concealed", "denial"):
+            with self.subTest(query=query):
+                response = self.client.get(reverse("words:index"), {"q": query})
+                self.assertEqual(list(response.context["items"]), [phrase])
+
+    def test_words_explorer_status_filters_include_implicit_new_and_saved(self):
+        learning_item = VocabularyItem.objects.create(
+            **vocabulary_item_fields(movie=self.movie, word="contemplate")
+        )
+        mastered_item = VocabularyItem.objects.create(
+            **vocabulary_item_fields(movie=self.movie, word="substantiate")
+        )
+        saved_item = VocabularyItem.objects.create(
+            **vocabulary_item_fields(movie=self.movie, word="meticulous")
+        )
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=learning_item,
+            status=UserWordStatus.Status.LEARNING,
+        )
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=mastered_item,
+            status=UserWordStatus.Status.MASTERED,
+        )
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=saved_item,
+            status=UserWordStatus.Status.LEARNING,
+            is_saved=True,
+        )
+
+        new_response = self.client.get(reverse("words:index"), {"status": "new"})
+        saved_response = self.client.get(
+            reverse("words:index"), {"status": "saved"}
+        )
+
+        self.assertEqual(list(new_response.context["items"]), [self.item])
+        self.assertEqual(list(saved_response.context["items"]), [saved_item])
+        self.assertEqual(saved_response.context["items"][0].learning_status, "learning")
+
+    def test_words_explorer_combines_type_movie_and_cefr_filters(self):
+        second_movie = Movie.objects.create(
+            user=self.user,
+            title="Arrival",
+            release_year=2016,
+        )
+        matching_item = VocabularyItem.objects.create(
+            movie=second_movie,
+            word_or_phrase="conundrum",
+            type=VocabularyItem.Type.NOUN,
+            cefr_level=VocabularyItem.CefrLevel.C2,
+            definition_en="A difficult problem.",
+            example_sentence="The apparent conundrum changed her approach.",
+            blank_sentence="The apparent ___ changed her approach.",
+        )
+        VocabularyItem.objects.create(
+            movie=second_movie,
+            word_or_phrase="elusive",
+            type=VocabularyItem.Type.ADJECTIVE,
+            cefr_level=VocabularyItem.CefrLevel.C1,
+            definition_en="Difficult to find.",
+            example_sentence="The answer remained elusive.",
+            blank_sentence="The answer remained ___.",
+        )
+
+        response = self.client.get(
+            reverse("words:index"),
+            {
+                "movie": second_movie.pk,
+                "type": VocabularyItem.Type.NOUN,
+                "cefr": [VocabularyItem.CefrLevel.C1, VocabularyItem.CefrLevel.C2],
+            },
+        )
+
+        self.assertEqual(list(response.context["items"]), [matching_item])
+
+    def test_words_explorer_rejects_another_users_movie_filter(self):
+        other_movie = Movie.objects.create(
+            user=self.other_user,
+            title="Heat",
+            release_year=1995,
+        )
+        outsider = VocabularyItem.objects.create(
+            **vocabulary_item_fields(movie=other_movie, word="outsider")
+        )
+
+        response = self.client.get(
+            reverse("words:index"),
+            {"movie": other_movie.pk},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["filter_form"].is_valid())
+        self.assertEqual(list(response.context["items"]), [])
+        self.assertNotContains(response, outsider.word_or_phrase)
+
+    def test_words_explorer_card_metadata_is_available_without_extra_queries(self):
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.item,
+            status=UserWordStatus.Status.LEARNING,
+            is_saved=True,
+        )
+        response = self.client.get(reverse("words:index"))
+        items = list(response.context["items"])
+
+        with self.assertNumQueries(0):
+            self.assertEqual(items[0].movie.title, self.movie.title)
+            self.assertEqual(items[0].learning_status, "learning")
+            self.assertTrue(items[0].is_saved_for_user)
+
+    def test_words_explorer_returns_results_partial_for_htmx(self):
+        response = self.client.get(
+            reverse("words:index"),
+            {"q": "scrutinize"},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "partials/word_explorer_results.html")
+        self.assertTemplateNotUsed(response, "vocabulary/words_explorer.html")
+        self.assertContains(response, 'id="word-results"')
+
+    def test_words_explorer_paginates_and_preserves_filters(self):
+        for index in range(25):
+            VocabularyItem.objects.create(
+                **vocabulary_item_fields(movie=self.movie, word=f"term-{index:02d}")
+            )
+
+        response = self.client.get(
+            reverse("words:index"),
+            {"type": VocabularyItem.Type.VERB},
+        )
+
+        self.assertEqual(len(response.context["items"]), 24)
+        self.assertEqual(response.context["page_obj"].paginator.count, 26)
+        self.assertContains(response, "type=verb&amp;page=2")
+
     def test_delete_is_post_only_and_scoped_to_owner(self):
         url = reverse("vocabulary:item_delete", args=[self.item.pk])
         self.assertEqual(self.client.get(url).status_code, 405)
