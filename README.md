@@ -54,20 +54,21 @@ If PowerShell blocks activation:
 
 ## Configuration
 
-Vocabulary generation uses any provider that supports OpenAI-compatible Chat Completions
-and JSON Schema structured outputs. Configure the API key, model, and provider base URL.
+Vocabulary generation is powered by LLM. Connect your own model with your API key.
+Any provider that supports openai-compatible chat completions and json schema structured outputs are allowed.
+Configure the API key, model, and provider base URL.
 
 Example for Fireworks:
 
 ```dotenv
+# .env
+...
 LLM_API_KEY=your-fireworks-key
 LLM_MODEL=accounts/fireworks/models/your-model-name
 LLM_BASE_URL=https://api.fireworks.ai/inference/v1
 LLM_REASONING_EFFORT=none
+...
 ```
-
-See `.env.example` for descriptions, OpenAI/Gemini/custom-provider examples, and subtitle
-filter presets.
 
 Automatic subtitle grounding is optional but also recommended:
 ```dotenv
@@ -79,9 +80,8 @@ OPENSUBTITLES_USER_AGENT=Filmocabulary v1.0
 ...
 ```
 
-Set `VOCABULARY_AUTO_SOURCE_PROVIDER=` to disable automatic lookup. Users can still upload `.srt` or `.txt` source files, and generation falls back to model knowledge when no source is available.
-
-Never commit `.env` or paste API keys into logs, issues, or chat messages.
+See `.env.example` for descriptions, OpenAI/Gemini/custom-provider examples, and subtitle
+filter presets.
 
 ## Generation Behavior
 
