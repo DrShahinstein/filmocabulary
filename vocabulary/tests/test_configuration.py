@@ -5,11 +5,23 @@ from django.test import SimpleTestCase
 class LLMConfigurationDocumentationTests(SimpleTestCase):
     def test_environment_example_documents_universal_llm_settings(self):
         contents = (settings.BASE_DIR / ".env.example").read_text(encoding="utf-8")
-        configured_names = {
-            line.partition("=")[0].strip()
-            for line in contents.splitlines()
-            if line.strip() and not line.lstrip().startswith("#") and "=" in line
-        }
+        active_assignments = []
+        documented_names = set()
+        for line in contents.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            is_comment = stripped.startswith("#")
+            candidate = stripped.removeprefix("#").strip()
+            name, separator, value = candidate.partition("=")
+            name = name.strip()
+            if not separator or not name.replace("_", "").isalnum() or not name.isupper():
+                continue
+
+            documented_names.add(name)
+            if not is_comment:
+                active_assignments.append((name, value.strip()))
 
         self.assertTrue(
             {
@@ -20,7 +32,7 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
                 "LLM_TEMPERATURE",
                 "LLM_REASONING_EFFORT",
                 "LLM_MAX_TOKENS_PARAMETER",
-            }.issubset(configured_names)
+            }.issubset(documented_names)
         )
         self.assertTrue(
             {
@@ -28,5 +40,9 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
                 "OPENAI_API_KEY",
                 "GEMINI_API_KEY",
                 "FIREWORKS_API_KEY",
-            }.isdisjoint(configured_names)
+            }.isdisjoint(documented_names)
+        )
+        self.assertFalse(
+            [name for name, value in active_assignments if not value],
+            "Active .env.example assignments must have explicit non-empty values.",
         )
