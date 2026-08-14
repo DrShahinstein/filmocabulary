@@ -1630,6 +1630,7 @@ textarea::placeholder {
 .mcq-context {
     padding-left: 13px;
     margin-block: 12px;
+    margin-inline: 0;
     border-left: 3px solid var(--gold);
     color: var(--muted);
     font-family: Georgia, "Times New Roman", serif;
