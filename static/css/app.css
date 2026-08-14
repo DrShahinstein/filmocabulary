@@ -1768,8 +1768,8 @@ textarea::placeholder {
     transform: translateY(-50%);
 }
 
-.words-search-control input {
-    padding-left: 38px;
+.words-search-control input[type="search"] {
+    padding-inline-start: 40px;
 }
 
 .words-filter__levels {
