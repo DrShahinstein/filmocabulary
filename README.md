@@ -30,6 +30,7 @@ Make sure you've configured `.env` before running the server.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+cp .env.example .env
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python manage.py migrate
@@ -41,6 +42,7 @@ python manage.py runserver
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+Copy-Item .env.example .env
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python manage.py migrate
