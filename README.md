@@ -54,55 +54,20 @@ If PowerShell blocks activation:
 
 ## Configuration
 
-Vocabulary generation is powered by a universal OpenAI-compatible client. Connect any
-provider that supports the Chat Completions API and JSON Schema structured outputs by
-setting its API key, model, and base URL. There is no provider allowlist or
-provider-specific application code.
+Vocabulary generation uses any provider that supports OpenAI-compatible Chat Completions
+and JSON Schema structured outputs. Configure the API key, model, and provider base URL.
 
-Example:
-```dotenv
-# .env
-...
-LLM_API_KEY=your-key
-LLM_MODEL=your-provider-model-name
-LLM_BASE_URL=https://your-provider.example/v1
-...
-```
-
-`LLM_BASE_URL` defaults to `https://api.openai.com/v1`, so an OpenAI configuration
-only needs `LLM_API_KEY` and `LLM_MODEL`. Other compatible services use their published
-base URL. For example:
+Example for Fireworks:
 
 ```dotenv
-# Gemini OpenAI compatibility endpoint
-LLM_API_KEY=your-gemini-key
-LLM_MODEL=gemini-3.6-flash
-LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-```
-
-```dotenv
-# Fireworks OpenAI compatibility endpoint
 LLM_API_KEY=your-fireworks-key
-LLM_MODEL=accounts/fireworks/models/deepseek-v4-flash-0731
+LLM_MODEL=accounts/fireworks/models/your-model-name
 LLM_BASE_URL=https://api.fireworks.ai/inference/v1
 LLM_REASONING_EFFORT=none
 ```
 
-Generic optional request controls preserve model-specific requirements without adding
-provider branches:
-
-```dotenv
-LLM_TIMEOUT_SECONDS=180
-LLM_TEMPERATURE=
-LLM_REASONING_EFFORT=
-LLM_MAX_TOKENS_PARAMETER=max_tokens
-```
-
-Leave temperature or reasoning effort blank to use the provider's default. Set
-`LLM_MAX_TOKENS_PARAMETER=max_completion_tokens` for models that require the newer
-Chat Completions parameter. The completion budget still scales as `512 + 160` tokens
-per requested candidate. The previous `VOCABULARY_LLM_PROVIDER`, `OPENAI_*`, `GEMINI_*`,
-and `FIREWORKS_*` variables are no longer read.
+See `.env.example` for descriptions, OpenAI/Gemini/custom-provider examples, and subtitle
+filter presets.
 
 Automatic subtitle grounding is optional but also recommended:
 ```dotenv
