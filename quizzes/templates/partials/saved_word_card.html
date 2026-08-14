@@ -1,0 +1,34 @@
+{% with item=word_status.vocabulary_item %}
+<article class="learning-card learning-card--saved">
+    <header class="learning-card__header">
+        <div>
+            <span class="level-badge level-badge--{{ item.cefr_level|lower }}">{{ item.cefr_level }}</span>
+            <span class="status-badge">{{ item.get_type_display }}</span>
+            <span class="status-badge">{{ word_status.get_status_display }}</span>
+            <h2>{{ item.word_or_phrase }}</h2>
+        </div>
+        <div class="saved-card__tools">
+            <span class="learning-card__movie">{{ item.movie.title }}{% if item.movie.release_year %} ({{ item.movie.release_year }}){% endif %}</span>
+            <form class="bookmark-form"
+                  method="post"
+                  action="{% url 'quizzes:toggle_saved' item.pk %}"
+                  hx-post="{% url 'quizzes:toggle_saved' item.pk %}"
+                  hx-target="closest article"
+                  hx-swap="outerHTML"
+                  hx-disabled-elt="find button">
+                {% csrf_token %}
+                <input type="hidden" name="context" value="saved-list">
+                <button class="button button--small bookmark-button is-saved"
+                        type="submit"
+                        aria-pressed="true"
+                        title="Remove from saved words">
+                    <i data-lucide="bookmark" aria-hidden="true"></i>
+                    <span>Saved</span>
+                </button>
+            </form>
+        </div>
+    </header>
+    <p class="learning-card__definition">{{ item.definition_en }}</p>
+    <blockquote>{{ item.example_sentence }}</blockquote>
+</article>
+{% endwith %}

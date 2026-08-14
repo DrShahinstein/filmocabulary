@@ -56,6 +56,8 @@ class QuizViewTests(TestCase):
             {"total": 6, "new": 4, "learning": 1, "mastered": 1},
         )
         self.assertContains(response, "Your progress")
+        self.assertContains(response, "Practice by movie")
+        self.assertContains(response, "Saved words (0)")
         self.assertNotContains(response, "Quiz history")
 
     def test_learning_pool_lists_only_current_users_learning_words(self):
@@ -109,6 +111,52 @@ class QuizViewTests(TestCase):
 
         self.assertTemplateUsed(response, "partials/mcq_question.html")
         self.assertTemplateNotUsed(response, "quizzes/practice.html")
+
+    def test_question_card_includes_skip_and_bookmark_controls(self):
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"])
+        )
+
+        self.assertContains(response, "Skip")
+        self.assertContains(response, reverse("quizzes:skip", args=["collection"]))
+        self.assertContains(response, "Save this word")
+
+    def test_question_filter_scopes_target_and_options_to_selected_movies(self):
+        selected_movie = make_movie(self.user, "The Matrix", 1999)
+        selected_items = [
+            make_vocabulary(
+                selected_movie,
+                word=f"selected-{index}",
+                definition=f"Selected meaning {index}.",
+            )
+            for index in range(5)
+        ]
+
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"]),
+            {"movies": [selected_movie.pk]},
+        )
+
+        question = response.context["question"]
+        self.assertEqual(question.target.movie, selected_movie)
+        self.assertEqual(question.movie_ids, (selected_movie.pk,))
+        self.assertEqual(
+            {option.vocabulary_item_id for option in question.options},
+            {item.pk for item in selected_items},
+        )
+
+    def test_question_filter_rejects_another_users_movie(self):
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"]),
+            {"movies": [self.outsider.movie_id]},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(
+            response,
+            "Choose valid movies from your library.",
+            status_code=400,
+        )
 
     def test_learning_question_targets_only_learning_word(self):
         learning = self.items[3]
@@ -167,6 +215,96 @@ class QuizViewTests(TestCase):
         )
         self.assertEqual(status.status, UserWordStatus.Status.LEARNING)
         self.assertEqual(status.wrong_count, 1)
+
+    def test_skip_returns_another_question_without_changing_status(self):
+        question = generate_question(user=self.user, target=self.items[0])
+
+        response = self.client.post(
+            reverse("quizzes:skip", args=["collection"]),
+            {"question_token": question.token},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "partials/mcq_question.html")
+        self.assertNotEqual(response.context["question"].target, question.target)
+        self.assertFalse(UserWordStatus.objects.filter(user=self.user).exists())
+
+    def test_bookmark_toggle_preserves_learning_state(self):
+        status = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[0],
+            status=UserWordStatus.Status.LEARNING,
+            wrong_count=2,
+        )
+
+        response = self.client.post(
+            reverse("quizzes:toggle_saved", args=[self.items[0].pk]),
+            HTTP_HX_REQUEST="true",
+        )
+
+        status.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Saved")
+        self.assertTrue(status.is_saved)
+        self.assertEqual(status.status, UserWordStatus.Status.LEARNING)
+        self.assertEqual(status.wrong_count, 2)
+
+    def test_bookmark_toggle_rejects_another_users_word(self):
+        response = self.client.post(
+            reverse("quizzes:toggle_saved", args=[self.outsider.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(
+            UserWordStatus.objects.filter(
+                user=self.user,
+                vocabulary_item=self.outsider,
+            ).exists()
+        )
+
+    def test_saved_words_list_is_owner_scoped(self):
+        saved = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[0],
+            is_saved=True,
+        )
+        UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.items[1],
+            is_saved=False,
+        )
+        UserWordStatus.objects.create(
+            user=self.other_user,
+            vocabulary_item=self.outsider,
+            is_saved=True,
+        )
+
+        response = self.client.get(reverse("quizzes:saved_words"))
+
+        self.assertQuerySetEqual(response.context["word_statuses"], [saved])
+        self.assertContains(response, self.items[0].word_or_phrase)
+        self.assertNotContains(response, self.items[1].word_or_phrase)
+        self.assertNotContains(response, self.outsider.word_or_phrase)
+
+    def test_feedback_next_link_preserves_movie_filter(self):
+        question = generate_question(
+            user=self.user,
+            target=self.items[0],
+            movie_ids=(self.movie.pk,),
+        )
+
+        response = self.client.post(
+            reverse("quizzes:answer", args=["collection"]),
+            {
+                "question_token": question.token,
+                "selected_option": self.items[0].pk,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertContains(response, f"movies={self.movie.pk}")
 
     def test_answer_rejects_option_not_present_in_signed_question(self):
         question = generate_question(user=self.user, target=self.items[0])

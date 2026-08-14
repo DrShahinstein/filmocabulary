@@ -16,7 +16,10 @@ from quizzes.services import (
     answer_question,
     generate_question,
     question_from_token,
+    skip_question,
+    toggle_saved_word,
 )
+from vocabulary.models import VocabularyItem
 
 from .factories import make_movie, make_user, make_vocabulary
 
@@ -157,6 +160,56 @@ class QuizEngineTests(TestCase):
         with self.assertRaisesMessage(QuizUnavailableError, "Learning Pool is empty"):
             generate_question(user=self.user, pool="learning")
 
+    def test_movie_filter_scopes_target_distractors_and_signed_question(self):
+        selected_movie = make_movie(self.user, "The Matrix", 1999)
+        selected_items = [
+            make_vocabulary(
+                selected_movie,
+                word=f"matrix-{index}",
+                definition=f"Matrix meaning {index}.",
+            )
+            for index in range(5)
+        ]
+
+        question = generate_question(
+            user=self.user,
+            movie_ids=(selected_movie.pk,),
+            rng=random.Random(4),
+        )
+        decoded = question_from_token(user=self.user, token=question.token)
+
+        self.assertEqual(question.movie_ids, (selected_movie.pk,))
+        self.assertEqual(decoded.movie_ids, (selected_movie.pk,))
+        self.assertEqual(question.target.movie, selected_movie)
+        self.assertEqual(
+            {option.vocabulary_item_id for option in question.options},
+            {item.pk for item in selected_items},
+        )
+
+        following = skip_question(user=self.user, token=question.token)
+        self.assertNotEqual(following.target, question.target)
+        self.assertEqual(following.movie_ids, (selected_movie.pk,))
+        self.assertEqual(following.target.movie, selected_movie)
+
+    def test_movie_filter_rejects_another_users_movie(self):
+        other_user = make_user("movie-filter-outsider")
+        other_movie = make_movie(other_user, "Heat", 1995)
+
+        with self.assertRaisesMessage(QuizUnavailableError, "valid movies"):
+            generate_question(user=self.user, movie_ids=(other_movie.pk,))
+
+    def test_skip_changes_target_without_creating_or_updating_status(self):
+        current = generate_question(
+            user=self.user,
+            target=self.verbs[0],
+            rng=random.Random(2),
+        )
+
+        following = skip_question(user=self.user, token=current.token)
+
+        self.assertNotEqual(following.target, current.target)
+        self.assertFalse(UserWordStatus.objects.filter(user=self.user).exists())
+
 
 class AnswerTrackingTests(TestCase):
     def setUp(self):
@@ -198,6 +251,7 @@ class AnswerTrackingTests(TestCase):
             user=self.user,
             vocabulary_item=self.items[0],
             status=UserWordStatus.Status.LEARNING,
+            is_saved=True,
             wrong_count=2,
         )
         question = generate_question(
@@ -217,6 +271,7 @@ class AnswerTrackingTests(TestCase):
         self.assertEqual(status.status, UserWordStatus.Status.MASTERED)
         self.assertEqual(status.correct_count, 1)
         self.assertEqual(status.wrong_count, 2)
+        self.assertTrue(status.is_saved)
 
     def test_wrong_answer_demotes_mastered_word_to_learning(self):
         status = UserWordStatus.objects.create(
@@ -338,3 +393,43 @@ class UserWordStatusModelTests(TestCase):
         self.item.delete()
 
         self.assertFalse(UserWordStatus.objects.filter(pk=status.pk).exists())
+
+    def test_bookmark_is_orthogonal_to_learning_status(self):
+        status = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.item,
+            status=UserWordStatus.Status.LEARNING,
+            wrong_count=2,
+        )
+
+        _, saved_status = toggle_saved_word(
+            user=self.user,
+            vocabulary_item_id=self.item.pk,
+        )
+
+        status.refresh_from_db()
+        self.assertTrue(saved_status.is_saved)
+        self.assertTrue(status.is_saved)
+        self.assertEqual(status.status, UserWordStatus.Status.LEARNING)
+        self.assertEqual(status.wrong_count, 2)
+
+    def test_bookmarking_new_word_creates_new_status_and_can_be_removed(self):
+        _, saved_status = toggle_saved_word(
+            user=self.user,
+            vocabulary_item_id=self.item.pk,
+        )
+        _, unsaved_status = toggle_saved_word(
+            user=self.user,
+            vocabulary_item_id=self.item.pk,
+        )
+
+        self.assertEqual(saved_status.status, UserWordStatus.Status.NEW)
+        self.assertTrue(saved_status.is_saved)
+        self.assertFalse(unsaved_status.is_saved)
+
+    def test_bookmark_rejects_vocabulary_outside_users_library(self):
+        with self.assertRaises(VocabularyItem.DoesNotExist):
+            toggle_saved_word(
+                user=self.other,
+                vocabulary_item_id=self.item.pk,
+            )

@@ -1,4 +1,7 @@
 <section class="quiz-panel quiz-feedback{% if result.is_correct %} quiz-feedback--correct{% endif %}">
+    <div class="quiz-question__bookmark">
+        {% include "partials/bookmark_button.html" with item=result.question.target is_saved=result.question.is_saved %}
+    </div>
     <div class="quiz-feedback__result">
         <i data-lucide="{% if result.is_correct %}circle-check-big{% else %}circle-x{% endif %}" aria-hidden="true"></i>
         <div>
@@ -13,8 +16,8 @@
     <p class="mcq-context">{{ result.question.target.example_sentence }}</p>
     <div class="button-row">
         <a class="button button--primary"
-           href="{% url 'quizzes:question' pool %}"
-           hx-get="{% url 'quizzes:question' pool %}"
+           href="{{ next_question_url }}"
+           hx-get="{{ next_question_url }}"
            hx-target="#quiz-region"
            hx-swap="innerHTML">Next question</a>
         {% if not result.is_correct %}

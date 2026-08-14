@@ -10,10 +10,16 @@
             <h1>Your progress</h1>
             <p class="page-intro">Practice is generated instantly from vocabulary already saved in your film library.</p>
         </div>
-        <a class="button button--primary" href="{% url 'quizzes:question' 'collection' %}">
-            <i data-lucide="play" aria-hidden="true"></i>
-            Start practice
-        </a>
+        <div class="button-row">
+            <a class="button button--secondary" href="{% url 'quizzes:saved_words' %}">
+                <i data-lucide="bookmark" aria-hidden="true"></i>
+                Saved words ({{ saved_count }})
+            </a>
+            <a class="button button--primary" href="{% url 'quizzes:question' 'collection' %}">
+                <i data-lucide="play" aria-hidden="true"></i>
+                Practice all
+            </a>
+        </div>
     </header>
 
     <section class="progress-stats" aria-label="Vocabulary progress">
@@ -37,6 +43,25 @@
             <strong>{{ progress.total }}</strong>
             <p>Total saved words</p>
         </article>
+    </section>
+
+    <section class="practice-filter" aria-labelledby="practice-filter-title">
+        <div>
+            <p class="eyebrow">Choose your source</p>
+            <h2 id="practice-filter-title">Practice by movie</h2>
+            <p>Select one or several films, or leave everything unchecked to practice your full collection.</p>
+        </div>
+        <form class="practice-filter__form" method="get" action="{% url 'quizzes:question' 'collection' %}">
+            <fieldset class="quiz-field--movies">
+                <legend>{{ practice_form.movies.label }}</legend>
+                {{ practice_form.movies }}
+                <p class="help-text">{{ practice_form.movies.help_text }}</p>
+            </fieldset>
+            <button class="button button--primary" type="submit">
+                <i data-lucide="play" aria-hidden="true"></i>
+                Start practice
+            </button>
+        </form>
     </section>
 
     <section class="learning-actions" aria-labelledby="learning-actions-title">

@@ -24,6 +24,7 @@ class UserWordStatus(models.Model):
         choices=Status.choices,
         default=Status.NEW,
     )
+    is_saved = models.BooleanField(default=False)
     wrong_count = models.PositiveIntegerField(default=0)
     correct_count = models.PositiveIntegerField(default=0)
     last_tested_at = models.DateTimeField(blank=True, null=True)
@@ -44,6 +45,10 @@ class UserWordStatus(models.Model):
             models.Index(
                 fields=("user", "last_tested_at"),
                 name="word_status_user_tested_idx",
+            ),
+            models.Index(
+                fields=("user", "is_saved"),
+                name="word_status_user_saved_idx",
             ),
         )
         verbose_name_plural = "user word statuses"

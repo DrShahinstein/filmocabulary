@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from django.core import signing
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Max, Min
+from django.db.models import Exists, Max, Min, OuterRef
 from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
+from movies.models import Movie
 from vocabulary.models import VocabularyItem
 
 from .models import UserWordStatus
@@ -45,6 +46,8 @@ class MultipleChoiceQuestion:
     options: tuple[QuizOption, ...]
     token: str
     pool: str
+    movie_ids: tuple[int, ...]
+    is_saved: bool
 
 
 @dataclass(frozen=True)
@@ -55,12 +58,40 @@ class AnswerResult:
     word_status: UserWordStatus
 
 
-def _owned_vocabulary(user):
-    return (
+def _normalise_movie_ids(*, user, movie_ids):
+    if movie_ids is None:
+        return ()
+    try:
+        normalized = tuple(sorted(set(movie_ids)))
+    except TypeError as exc:
+        raise QuizUnavailableError("Choose valid movies from your library.") from exc
+    if any(
+        not isinstance(movie_id, int) or isinstance(movie_id, bool)
+        for movie_id in normalized
+    ):
+        raise QuizUnavailableError("Choose valid movies from your library.")
+    if normalized and Movie.objects.filter(user=user, pk__in=normalized).count() != len(
+        normalized
+    ):
+        raise QuizUnavailableError("Choose valid movies from your library.")
+    return normalized
+
+
+def _owned_vocabulary(user, movie_ids=()):
+    saved_status = UserWordStatus.objects.filter(
+        user=user,
+        vocabulary_item_id=OuterRef("pk"),
+        is_saved=True,
+    )
+    queryset = (
         VocabularyItem.objects.filter(movie__user=user)
         .annotate(_trimmed_definition=Trim("definition_en"))
+        .annotate(_is_saved=Exists(saved_status))
         .exclude(_trimmed_definition="")
     )
+    if movie_ids:
+        queryset = queryset.filter(movie_id__in=movie_ids)
+    return queryset
 
 
 def _random_row(queryset, rng):
@@ -73,23 +104,25 @@ def _random_row(queryset, rng):
     return row or queryset.order_by("pk").first()
 
 
-def _target_queryset(user, pool):
-    owned = _owned_vocabulary(user).select_related("movie")
+def _target_queryset(user, pool, *, movie_ids=(), excluded_ids=()):
+    owned = _owned_vocabulary(user, movie_ids).select_related("movie")
     if pool == "learning":
         return owned.filter(
             user_statuses__user=user,
             user_statuses__status=UserWordStatus.Status.LEARNING,
-        )
+        ).exclude(pk__in=excluded_ids)
 
     encountered_ids = UserWordStatus.objects.filter(user=user).exclude(
         status=UserWordStatus.Status.NEW
     ).values("vocabulary_item_id")
-    new_words = owned.exclude(pk__in=encountered_ids)
-    return new_words if new_words.exists() else owned
+    new_words = owned.exclude(pk__in=encountered_ids).exclude(pk__in=excluded_ids)
+    if new_words.exists():
+        return new_words
+    return owned.exclude(pk__in=excluded_ids)
 
 
-def _select_distractors(*, user, target, rng):
-    owned = _owned_vocabulary(user).exclude(pk=target.pk).annotate(
+def _select_distractors(*, user, target, movie_ids, rng):
+    owned = _owned_vocabulary(user, movie_ids).exclude(pk=target.pk).annotate(
         _definition_key=Lower(Trim("definition_en"))
     )
     selected = []
@@ -126,18 +159,37 @@ def _select_distractors(*, user, target, rng):
     return selected
 
 
-def generate_question(*, user, pool="collection", target=None, rng=None):
+def generate_question(
+    *,
+    user,
+    pool="collection",
+    target=None,
+    movie_ids=None,
+    excluded_target_ids=(),
+    rng=None,
+):
     """Build a five-option MCQ entirely from vocabulary already in the database."""
     if pool not in QUIZ_POOLS:
         raise QuizUnavailableError("Choose a valid practice pool.")
 
+    normalized_movie_ids = _normalise_movie_ids(user=user, movie_ids=movie_ids)
     rng = rng or random.SystemRandom()
-    targets = _target_queryset(user, pool)
+    targets = _target_queryset(
+        user,
+        pool,
+        movie_ids=normalized_movie_ids,
+        excluded_ids=excluded_target_ids,
+    )
     if target is None:
         target = _random_row(targets, rng)
     else:
-        allowed_targets = targets if pool == "learning" else _owned_vocabulary(user)
-        if not allowed_targets.filter(pk=target.pk).exists():
+        allowed_targets = (
+            targets
+            if pool == "learning"
+            else _owned_vocabulary(user, normalized_movie_ids).select_related("movie")
+        )
+        target = allowed_targets.filter(pk=target.pk).first()
+        if target is None:
             raise QuizUnavailableError("That word is not available in this practice pool.")
 
     if target is None:
@@ -148,7 +200,12 @@ def generate_question(*, user, pool="collection", target=None, rng=None):
         )
         raise QuizUnavailableError(message)
 
-    distractors = _select_distractors(user=user, target=target, rng=rng)
+    distractors = _select_distractors(
+        user=user,
+        target=target,
+        movie_ids=normalized_movie_ids,
+        rng=rng,
+    )
     option_items = [target, *distractors]
     rng.shuffle(option_items)
     option_ids = [item.pk for item in option_items]
@@ -157,6 +214,7 @@ def generate_question(*, user, pool="collection", target=None, rng=None):
             "target": target.pk,
             "options": option_ids,
             "pool": pool,
+            "movies": list(normalized_movie_ids),
             "nonce": secrets.token_urlsafe(8),
         },
         salt=QUESTION_SALT,
@@ -166,7 +224,14 @@ def generate_question(*, user, pool="collection", target=None, rng=None):
         QuizOption(label, item.pk, item.definition_en)
         for label, item in zip(OPTION_LABELS, option_items, strict=True)
     )
-    return MultipleChoiceQuestion(target, options, token, pool)
+    return MultipleChoiceQuestion(
+        target=target,
+        options=options,
+        token=token,
+        pool=pool,
+        movie_ids=normalized_movie_ids,
+        is_saved=bool(target._is_saved),
+    )
 
 
 def question_from_token(*, user, token):
@@ -186,6 +251,7 @@ def question_from_token(*, user, token):
     except (KeyError, TypeError) as exc:
         raise QuizTokenError("This question is invalid. Load a new one to continue.") from exc
 
+    movie_ids = payload.get("movies", [])
     valid_ids = (
         isinstance(target_id, int)
         and not isinstance(target_id, bool)
@@ -198,13 +264,24 @@ def question_from_token(*, user, token):
         and len(set(option_ids)) == 5
         and target_id in option_ids
         and pool in QUIZ_POOLS
+        and isinstance(movie_ids, list)
+        and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in movie_ids
+        )
+        and len(set(movie_ids)) == len(movie_ids)
     )
     if not valid_ids:
         raise QuizTokenError("This question is invalid. Load a new one to continue.")
 
+    try:
+        normalized_movie_ids = _normalise_movie_ids(user=user, movie_ids=movie_ids)
+    except QuizUnavailableError as exc:
+        raise QuizTokenError("This question is invalid. Load a new one to continue.") from exc
+
     items = {
         item.pk: item
-        for item in _owned_vocabulary(user)
+        for item in _owned_vocabulary(user, normalized_movie_ids)
         .filter(pk__in=option_ids)
         .select_related("movie")
     }
@@ -218,7 +295,52 @@ def question_from_token(*, user, token):
         QuizOption(label, item_id, items[item_id].definition_en)
         for label, item_id in zip(OPTION_LABELS, option_ids, strict=True)
     )
-    return MultipleChoiceQuestion(target, options, token, pool)
+    return MultipleChoiceQuestion(
+        target=target,
+        options=options,
+        token=token,
+        pool=pool,
+        movie_ids=normalized_movie_ids,
+        is_saved=bool(target._is_saved),
+    )
+
+
+def skip_question(*, user, token, expected_pool=None):
+    """Return another question in the same scope without changing word state."""
+    current = question_from_token(user=user, token=token)
+    if expected_pool is not None and current.pool != expected_pool:
+        raise QuizTokenError("This question belongs to a different practice pool.")
+    return generate_question(
+        user=user,
+        pool=current.pool,
+        movie_ids=current.movie_ids,
+        excluded_target_ids=(current.target.pk,),
+    )
+
+
+@transaction.atomic
+def toggle_saved_word(*, user, vocabulary_item_id):
+    """Toggle a user-owned word bookmark without changing its learning status."""
+    vocabulary_item = (
+        VocabularyItem.objects.filter(
+            pk=vocabulary_item_id,
+            movie__user=user,
+        )
+        .select_related("movie")
+        .first()
+    )
+    if vocabulary_item is None:
+        raise VocabularyItem.DoesNotExist
+
+    user.__class__.objects.select_for_update().get(pk=user.pk)
+    word_status, _ = UserWordStatus.objects.get_or_create(
+        user=user,
+        vocabulary_item=vocabulary_item,
+    )
+    word_status.vocabulary_item = vocabulary_item
+    word_status.is_saved = not word_status.is_saved
+    word_status.save(update_fields=("is_saved",))
+    return vocabulary_item, word_status
 
 
 @transaction.atomic

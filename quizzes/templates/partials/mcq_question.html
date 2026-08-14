@@ -7,11 +7,14 @@
     </section>
 {% else %}
     <section class="quiz-panel">
-        <div class="quiz-question__meta">
-            <span class="level-badge level-badge--{{ question.target.cefr_level|lower }}">{{ question.target.cefr_level }}</span>
-            <span>{{ question.target.get_type_display }}</span>
-            <span aria-hidden="true">·</span>
-            <span>{{ question.target.movie.title }}</span>
+        <div class="quiz-question__toolbar">
+            <div class="quiz-question__meta">
+                <span class="level-badge level-badge--{{ question.target.cefr_level|lower }}">{{ question.target.cefr_level }}</span>
+                <span>{{ question.target.get_type_display }}</span>
+                <span aria-hidden="true">·</span>
+                <span>{{ question.target.movie.title }}</span>
+            </div>
+            {% include "partials/bookmark_button.html" with item=question.target is_saved=question.is_saved %}
         </div>
         <p class="page-kicker">Which definition best matches</p>
         <h2 class="mcq-term">{{ question.target.word_or_phrase }}</h2>
@@ -38,7 +41,16 @@
                 </div>
                 {% for error in form.selected_option.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
             </fieldset>
-            <button class="button button--primary" type="submit">Check answer</button>
+            <div class="button-row">
+                <button class="button button--primary" type="submit">Check answer</button>
+                <button class="button button--secondary"
+                        type="submit"
+                        formaction="{% url 'quizzes:skip' pool %}"
+                        formnovalidate
+                        hx-post="{% url 'quizzes:skip' pool %}">
+                    Skip
+                </button>
+            </div>
         </form>
     </section>
 {% endif %}

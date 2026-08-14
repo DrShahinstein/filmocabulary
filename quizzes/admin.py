@@ -10,11 +10,12 @@ class UserWordStatusAdmin(admin.ModelAdmin):
         "user",
         "vocabulary_item",
         "status",
+        "is_saved",
         "correct_count",
         "wrong_count",
         "last_tested_at",
     )
-    list_filter = ("status", "last_tested_at")
+    list_filter = ("status", "is_saved", "last_tested_at")
     search_fields = (
         "user__username",
         "vocabulary_item__word_or_phrase",

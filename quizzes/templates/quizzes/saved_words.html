@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Saved Words | Filmocabulary{% endblock %}
+
+{% block content %}
+<div class="learning-workspace">
+    <header class="section-heading section-heading--with-tools">
+        <div>
+            <p class="eyebrow">Personal collection</p>
+            <h1>Saved Words</h1>
+            <p class="page-intro">Bookmarks are independent of whether a word is new, learning, or mastered.</p>
+        </div>
+        <a class="button button--secondary" href="{% url 'quizzes:dashboard' %}">View progress</a>
+    </header>
+
+    {% if word_statuses %}
+        <div class="learning-list">
+            {% for word_status in word_statuses %}
+                {% include "partials/saved_word_card.html" %}
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <i data-lucide="bookmark" aria-hidden="true"></i>
+            <h2>No saved words yet</h2>
+            <p>Use the Save button on a practice card to keep useful words here.</p>
+            <a class="button button--primary" href="{% url 'quizzes:question' 'collection' %}">Start practice</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
