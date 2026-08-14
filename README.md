@@ -86,9 +86,9 @@ filter presets.
 ## Generation Behavior
 
 Generation is deliberately single-shot. For a request of `N` saved entries, the service
-asks for `N + 15` candidates, validates and source-checks them, and saves the first `N`
-usable results. If fewer candidates pass validation, the valid subset is saved without a
-second LLM request.
+adds `ceil(N × 20%)` candidates, bounded between 3 and 15, then validates and
+source-checks the response and saves the first `N` usable results. If fewer candidates pass
+validation, the valid subset is saved without a second LLM request.
 
 ### Token Strategy
 
