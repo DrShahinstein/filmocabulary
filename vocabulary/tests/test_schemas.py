@@ -101,37 +101,31 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
             VocabularyExtractionResponse.model_validate(payload)
 
     def test_prompt_contains_required_guardrails(self):
-        self.assertIn(
-            "Primary: Extract all genuine, high-value B2, C1, and C2 terms present in the source.",
-            SYSTEM_PROMPT,
-        )
-        self.assertIn("expressive, figurative, cinematic, literary, or nuanced", SYSTEM_PROMPT)
-        self.assertIn("If and only if the source genuinely lacks enough qualifying B2-C2 terms", SYSTEM_PROMPT)
+        self.assertIn("Primary Target (B2-C2)", SYSTEM_PROMPT)
+        self.assertIn("expressive verbs, nuanced adjectives", SYSTEM_PROMPT)
+        self.assertIn("Secondary Selection (B1)", SYSTEM_PROMPT)
+        self.assertIn("Never add B1 merely to reach candidate_limit", SYSTEM_PROMPT)
         self.assertIn("Quality outranks count.", SYSTEM_PROMPT)
-        self.assertIn("plain, functional, generic, predictable, or trivial", SYSTEM_PROMPT)
-        self.assertIn('"brother-in-law" and "aunt"', SYSTEM_PROMPT)
-        self.assertIn('"divorced" and "single"', SYSTEM_PROMPT)
-        self.assertIn('"beloved" and "nice"', SYSTEM_PROMPT)
+        self.assertIn("Returning fewer than candidate_limit is correct", SYSTEM_PROMPT)
+        self.assertIn("NO Plot-Driven / Compositional Phrases", SYSTEM_PROMPT)
+        self.assertIn('"stolen house" -> REJECT', SYSTEM_PROMPT)
+        self.assertIn('"mental projection" -> REJECT', SYSTEM_PROMPT)
+        self.assertIn('family/relative terms ("brother-in-law")', SYSTEM_PROMPT)
+        self.assertIn('civil statuses ("divorced")', SYSTEM_PROMPT)
+        self.assertIn('everyday descriptors ("beloved", "nice")', SYSTEM_PROMPT)
         self.assertIn(
-            "assign CEFR solely from their lexical rarity, idiomatic complexity, and recognized pedagogical difficulty in standard English",
+            "recognized dictionary entry, fixed phrasal verb, or established idiom",
             SYSTEM_PROMPT,
         )
         self.assertIn(
-            '"mental projection" is not advanced merely because its concept sounds complex',
+            "Any arbitrary adjacent words or literal descriptions",
             SYSTEM_PROMPT,
         )
-        self.assertIn(
-            "independently of the film's lore, plot, world-building, or narrative depth",
-            SYSTEM_PROMPT,
-        )
-        self.assertIn("Verbatim source grounding is non-negotiable", SYSTEM_PROMPT)
-        self.assertIn("NEVER invent, hallucinate", SYSTEM_PROMPT)
-        self.assertIn(
-            "Do not reveal plot twists, endings, culprits, betrayals, key character deaths, or resolutions.",
-            SYSTEM_PROMPT,
-        )
-        self.assertIn("literal base/uninflected form", SYSTEM_PROMPT)
-        self.assertIn("outside the required JSON schema", SYSTEM_PROMPT)
+        self.assertIn("MUST appear verbatim in the source text", SYSTEM_PROMPT)
+        self.assertIn("NEVER invent, paraphrase", SYSTEM_PROMPT)
+        self.assertIn("use the base/lemma form", SYSTEM_PROMPT)
+        self.assertIn("zero plot spoilers", SYSTEM_PROMPT)
+        self.assertIn("Strict JSON output matching the required schema", SYSTEM_PROMPT)
 
     def test_provider_schema_uses_aliases_and_forbids_extra_properties(self):
         response_schema = VocabularyExtractionResponse.model_json_schema(by_alias=True)

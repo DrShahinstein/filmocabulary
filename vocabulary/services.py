@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -10,7 +11,12 @@ from pydantic import ValidationError as PydanticValidationError
 
 from movies.models import Movie
 
-from .constants import GENERATION_CANDIDATE_SURPLUS, MAX_GENERATION_ITEMS
+from .constants import (
+    GENERATION_CANDIDATE_SURPLUS_RATIO,
+    MAX_GENERATION_CANDIDATE_SURPLUS,
+    MAX_GENERATION_ITEMS,
+    MIN_GENERATION_CANDIDATE_SURPLUS,
+)
 from .ingestion import SourceDocument
 from .matching import source_contains_term
 from .models import VocabularyItem
@@ -369,7 +375,7 @@ def _normalise_title(value: str) -> str:
 def _request_candidates(
     *,
     movie: Movie,
-    item_count: int,
+    candidate_limit: int,
     provider: VocabularyLLMClient,
     source: SourceDocument | None,
 ) -> VocabularyExtractionCandidate:
@@ -381,7 +387,7 @@ def _request_candidates(
         parsed = provider.generate(
             movie_title=movie.title,
             movie_reference=movie_label,
-            item_count=item_count,
+            candidate_limit=candidate_limit,
             source=source,
         )
     except ProviderConfigurationError as exc:
@@ -418,18 +424,18 @@ def _request_candidates(
         raise VocabularyResponseError(
             "The generated vocabulary did not match the selected movie. Please try again."
         )
-    if len(parsed.items) > item_count:
+    if len(parsed.items) > candidate_limit:
         logger.warning(
             "%s returned %d candidates above the request budget; extras were trimmed",
             provider.name,
-            len(parsed.items) - item_count,
+            len(parsed.items) - candidate_limit,
         )
         parsed = VocabularyExtractionCandidate.model_validate(
             {
                 "movie_title": parsed.movie_title,
                 "items": [
                     item.model_dump(mode="json", by_alias=True)
-                    for item in parsed.items[:item_count]
+                    for item in parsed.items[:candidate_limit]
                 ],
             }
         )
@@ -485,6 +491,17 @@ def _accept_candidates(
     )
 
 
+def _candidate_limit(item_count: int) -> int:
+    surplus = min(
+        MAX_GENERATION_CANDIDATE_SURPLUS,
+        max(
+            MIN_GENERATION_CANDIDATE_SURPLUS,
+            math.ceil(item_count * GENERATION_CANDIDATE_SURPLUS_RATIO),
+        ),
+    )
+    return item_count + surplus
+
+
 def _request_payload(
     *,
     movie: Movie,
@@ -492,10 +509,10 @@ def _request_payload(
     provider: VocabularyLLMClient,
     source: SourceDocument | None,
 ) -> tuple[VocabularyExtractionResponse, CandidateYield]:
-    candidate_count = item_count + GENERATION_CANDIDATE_SURPLUS
+    candidate_limit = _candidate_limit(item_count)
     first_payload = _request_candidates(
         movie=movie,
-        item_count=candidate_count,
+        candidate_limit=candidate_limit,
         provider=provider,
         source=source,
     )
@@ -518,12 +535,12 @@ def _request_payload(
 
     usage_logger.info(
         "Vocabulary candidate yield: provider=%s requested_items=%d "
-        "initial_requested=%d initial_returned=%d initial_accepted=%d "
+        "candidate_limit=%d initial_returned=%d initial_accepted=%d "
         "initial_rejected=%d final_accepted=%d "
         "rejection_reasons=duplicate:%d,ungrounded:%d,invalid_example:%d",
         provider.name,
         item_count,
-        candidate_count,
+        candidate_limit,
         initial_returned,
         initial_accepted,
         initial_rejected,

@@ -20,6 +20,7 @@ from vocabulary.services import (
     VocabularyPersistenceError,
     VocabularyProviderError,
     VocabularyResponseError,
+    _candidate_limit,
     generate_and_save_vocabulary,
 )
 
@@ -58,6 +59,15 @@ class VocabularyGenerationServiceTests(TestCase):
         )
         return client
 
+    def test_candidate_limit_uses_proportional_floor_and_ceiling(self):
+        self.assertEqual(
+            {
+                item_count: _candidate_limit(item_count)
+                for item_count in (1, 5, 30, 80, 100)
+            },
+            {1: 4, 5: 8, 30: 36, 80: 95, 100: 115},
+        )
+
     def test_creates_movie_and_validated_items_atomically(self):
         parsed = VocabularyExtractionCandidate.model_validate(vocabulary_payload())
         client = self.llm_client_with_payload(parsed)
@@ -77,7 +87,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(VocabularyItem.objects.get().blank_sentence.count("___"), 1)
         request_kwargs = client.chat.completions.create.call_args.kwargs
         self.assertEqual(request_kwargs["model"], "test-structured-model")
-        self.assertEqual(request_kwargs["max_tokens"], 3_712)
+        self.assertEqual(request_kwargs["max_tokens"], 1_792)
         self.assertEqual(request_kwargs["reasoning_effort"], "none")
         self.assertEqual(request_kwargs["response_format"]["type"], "json_schema")
 
@@ -100,7 +110,7 @@ class VocabularyGenerationServiceTests(TestCase):
         prompt = client.chat.completions.create.call_args.kwargs["messages"][1][
             "content"
         ]
-        self.assertIn('"requested_items": 115', prompt)
+        self.assertIn('"candidate_limit": 115', prompt)
 
     def test_accepts_and_persists_b1_backfill_item(self):
         payload = vocabulary_payload(word="abandon")
@@ -134,7 +144,7 @@ class VocabularyGenerationServiceTests(TestCase):
         prompt = client.chat.completions.create.call_args.kwargs["messages"][1][
             "content"
         ]
-        self.assertIn('"requested_items": 17', prompt)
+        self.assertIn('"candidate_limit": 5', prompt)
 
     def test_rejects_item_count_above_one_hundred(self):
         with self.assertRaisesRegex(
@@ -151,7 +161,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertFalse(Movie.objects.exists())
 
     def test_generic_client_uses_structured_output_contract(self):
-        client = self.llm_client_with_payload(vocabulary_payload(item_count=20))
+        client = self.llm_client_with_payload(vocabulary_payload(item_count=8))
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -165,19 +175,35 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(result.created_count, 5)
         request_kwargs = client.chat.completions.create.call_args.kwargs
         self.assertEqual(request_kwargs["model"], "test-structured-model")
-        self.assertEqual(request_kwargs["max_tokens"], 3_712)
+        self.assertEqual(request_kwargs["max_tokens"], 1_792)
         self.assertEqual(request_kwargs["reasoning_effort"], "none")
         self.assertNotIn("extra_body", request_kwargs)
         self.assertIn(
-            "Strictly exclude A1-A2 vocabulary",
+            '"stolen house" -> REJECT',
             request_kwargs["messages"][0]["content"],
         )
         self.assertIn(
-            "NEVER invent, hallucinate",
+            "NEVER invent, paraphrase",
             request_kwargs["messages"][0]["content"],
         )
         self.assertIn(
-            "backfill the remaining slots with genuine B1 entries",
+            "never use B1 as array padding",
+            request_kwargs["messages"][1]["content"],
+        )
+        self.assertIn(
+            "Return at most candidate_limit",
+            request_kwargs["messages"][1]["content"],
+        )
+        self.assertIn(
+            '"candidate_limit": 8',
+            request_kwargs["messages"][1]["content"],
+        )
+        self.assertNotIn(
+            "Generate exactly",
+            request_kwargs["messages"][1]["content"],
+        )
+        self.assertNotIn(
+            "Do not stop early",
             request_kwargs["messages"][1]["content"],
         )
         self.assertIn(
@@ -192,14 +218,14 @@ class VocabularyGenerationServiceTests(TestCase):
         collection_schema = response_format["json_schema"]["schema"]["properties"][
             "items"
         ]
-        self.assertEqual(collection_schema["minItems"], 20)
-        self.assertEqual(collection_schema["maxItems"], 20)
+        self.assertEqual(collection_schema["minItems"], 1)
+        self.assertEqual(collection_schema["maxItems"], 8)
         self.assertIn("CEFR_level", item_schema["properties"])
         self.assertNotIn("blank_sentence", item_schema["properties"])
         client.close.assert_not_called()
 
     def test_generic_client_scales_output_limit_for_thirty_items(self):
-        client = self.llm_client_with_payload(vocabulary_payload(item_count=45))
+        client = self.llm_client_with_payload(vocabulary_payload(item_count=36))
 
         generate_and_save_vocabulary(
             user=self.user,
@@ -210,10 +236,10 @@ class VocabularyGenerationServiceTests(TestCase):
         )
 
         request_kwargs = client.chat.completions.create.call_args.kwargs
-        self.assertEqual(request_kwargs["max_tokens"], 7_712)
+        self.assertEqual(request_kwargs["max_tokens"], 6_272)
 
     def test_generic_client_logs_usage_without_response_content(self):
-        client = self.llm_client_with_payload(vocabulary_payload(item_count=20))
+        client = self.llm_client_with_payload(vocabulary_payload(item_count=8))
 
         with self.assertLogs("vocabulary.usage", level="INFO") as logs:
             generate_and_save_vocabulary(
@@ -229,6 +255,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertIn("completion_tokens=600", usage_log)
         self.assertIn("total_tokens=2100", usage_log)
         self.assertIn("cached_prompt_tokens=100", usage_log)
+        self.assertIn("candidate_limit=8", usage_log)
         self.assertIn("reasoning_effort=none", usage_log)
         self.assertNotIn("scrutinize", usage_log)
 
@@ -253,7 +280,7 @@ class VocabularyGenerationServiceTests(TestCase):
                             "index": 0,
                             "message": {
                                 "role": "assistant",
-                                "content": json.dumps(vocabulary_payload(item_count=20)),
+                                "content": json.dumps(vocabulary_payload(item_count=8)),
                             },
                             "finish_reason": "stop",
                         }
@@ -289,15 +316,15 @@ class VocabularyGenerationServiceTests(TestCase):
             "https://llm.example/v1/chat/completions",
         )
         body = captured_request["body"]
-        self.assertEqual(body["max_tokens"], 3_712)
+        self.assertEqual(body["max_tokens"], 1_792)
         self.assertEqual(body["reasoning_effort"], "none")
         self.assertNotIn("context_length_exceeded_behavior", body)
         self.assertEqual(body["response_format"]["type"], "json_schema")
         items_schema = body["response_format"]["json_schema"]["schema"][
             "properties"
         ]["items"]
-        self.assertEqual(items_schema["minItems"], 20)
-        self.assertEqual(items_schema["maxItems"], 20)
+        self.assertEqual(items_schema["minItems"], 1)
+        self.assertEqual(items_schema["maxItems"], 8)
         self.assertIn(
             "CEFR_level",
             body["response_format"]["json_schema"]["schema"]["$defs"][
@@ -409,7 +436,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertFalse(VocabularyItem.objects.exists())
 
     def test_surplus_absorbs_rejections_without_requesting_a_refill(self):
-        payload = vocabulary_payload(item_count=17)
+        payload = vocabulary_payload(item_count=5)
         payload["items"][1]["example_sentence"] = (
             "The reporter scrutinized every small detail."
         )
@@ -458,6 +485,7 @@ class VocabularyGenerationServiceTests(TestCase):
         client.chat.completions.create.assert_called_once()
         yield_log = "\n".join(logs.output)
         self.assertIn("initial_returned=51", yield_log)
+        self.assertIn("candidate_limit=95", yield_log)
         self.assertIn("initial_accepted=50", yield_log)
         self.assertIn("initial_rejected=1", yield_log)
         self.assertIn("final_accepted=50", yield_log)
@@ -487,7 +515,7 @@ class VocabularyGenerationServiceTests(TestCase):
         schema = client.chat.completions.create.call_args.kwargs[
             "response_format"
         ]["json_schema"]["schema"]["properties"]["items"]
-        self.assertEqual((schema["minItems"], schema["maxItems"]), (20, 20))
+        self.assertEqual((schema["minItems"], schema["maxItems"]), (1, 8))
 
     def test_all_semantically_invalid_candidates_write_nothing(self):
         payload = vocabulary_payload()
