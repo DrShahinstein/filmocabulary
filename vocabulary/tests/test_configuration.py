@@ -5,7 +5,7 @@ from django.test import SimpleTestCase
 class LLMConfigurationDocumentationTests(SimpleTestCase):
     def test_environment_example_documents_universal_llm_settings(self):
         contents = (settings.BASE_DIR / ".env.example").read_text(encoding="utf-8")
-        active_assignments = []
+        active_assignments = {}
         documented_names = set()
         for line in contents.splitlines():
             stripped = line.strip()
@@ -21,7 +21,7 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
 
             documented_names.add(name)
             if not is_comment:
-                active_assignments.append((name, value.strip()))
+                active_assignments[name] = value.strip()
 
         self.assertTrue(
             {
@@ -42,7 +42,24 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
                 "FIREWORKS_API_KEY",
             }.isdisjoint(documented_names)
         )
+        required_assignments = {
+            "LLM_API_KEY",
+            "LLM_MODEL",
+            "LLM_BASE_URL",
+            "LLM_TIMEOUT_SECONDS",
+            "LLM_MAX_TOKENS_PARAMETER",
+        }
+        self.assertTrue(required_assignments.issubset(active_assignments))
         self.assertFalse(
-            [name for name, value in active_assignments if not value],
-            "Active .env.example assignments must have explicit non-empty values.",
+            {
+                name
+                for name in required_assignments
+                if not active_assignments[name]
+            },
+            "Required LLM example assignments must be non-empty.",
+        )
+        self.assertEqual(active_assignments["LLM_MODEL"], "gpt-4.1-mini")
+        self.assertEqual(
+            active_assignments["LLM_BASE_URL"],
+            "https://api.openai.com/v1",
         )
