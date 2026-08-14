@@ -19,8 +19,8 @@ from .providers import (
     ProviderConfigurationError,
     ProviderRequestError,
     ProviderResponseError,
-    VocabularyProvider,
-    build_vocabulary_provider,
+    VocabularyLLMClient,
+    build_vocabulary_llm_client,
 )
 from .schemas import (
     VocabularyExtractionCandidate,
@@ -370,7 +370,7 @@ def _request_candidates(
     *,
     movie: Movie,
     item_count: int,
-    provider: VocabularyProvider,
+    provider: VocabularyLLMClient,
     source: SourceDocument | None,
 ) -> VocabularyExtractionCandidate:
     movie_label = movie.title
@@ -489,7 +489,7 @@ def _request_payload(
     *,
     movie: Movie,
     item_count: int,
-    provider: VocabularyProvider,
+    provider: VocabularyLLMClient,
     source: SourceDocument | None,
 ) -> tuple[VocabularyExtractionResponse, CandidateYield]:
     candidate_count = item_count + GENERATION_CANDIDATE_SURPLUS
@@ -685,7 +685,7 @@ def generate_and_save_vocabulary(
             raise ValueError("The movie details are invalid.") from exc
 
     try:
-        provider = build_vocabulary_provider(client=client)
+        provider = build_vocabulary_llm_client(client=client)
     except ProviderConfigurationError as exc:
         raise VocabularyConfigurationError(str(exc)) from exc
     try:

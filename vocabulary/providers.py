@@ -1,3 +1,5 @@
+"""Universal structured-output client for OpenAI-compatible LLM endpoints."""
+
 import json
 import logging
 import math
@@ -14,10 +16,9 @@ from .schemas import VocabularyExtractionCandidate
 logger = logging.getLogger(__name__)
 usage_logger = logging.getLogger("vocabulary.usage")
 
-SUPPORTED_PROVIDERS = frozenset({"fireworks", "gemini", "openai"})
-FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
-FIREWORKS_COMPLETION_BASE_TOKENS = 512
-FIREWORKS_COMPLETION_TOKENS_PER_ITEM = 160
+LLM_COMPLETION_BASE_TOKENS = 512
+LLM_COMPLETION_TOKENS_PER_ITEM = 160
+SUPPORTED_TOKEN_PARAMETERS = frozenset({"max_tokens", "max_completion_tokens"})
 
 SYSTEM_PROMPT = """
 You are an exacting lexicographer extracting high-value English-learning vocabulary from movie dialogue.
@@ -56,7 +57,9 @@ class ProviderResponseError(Exception):
     pass
 
 
-class VocabularyProvider(Protocol):
+class VocabularyLLMClient(Protocol):
+    """Application-facing contract for vocabulary generation transports."""
+
     name: str
 
     def generate(
@@ -92,18 +95,44 @@ def _positive_timeout_setting(name: str) -> float:
     return timeout
 
 
-def selected_provider_name() -> str:
-    value = getattr(settings, "VOCABULARY_LLM_PROVIDER", "openai")
+def _optional_float_setting(name: str) -> float | None:
+    value = getattr(settings, name, "")
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ProviderConfigurationError(
+            "Vocabulary generation is not configured correctly."
+        ) from exc
+    if not math.isfinite(number):
+        raise ProviderConfigurationError(
+            "Vocabulary generation is not configured correctly."
+        )
+    return number
+
+
+def _optional_string_setting(name: str) -> str | None:
+    value = getattr(settings, name, "")
+    if value is None:
+        return None
     if not isinstance(value, str):
         raise ProviderConfigurationError(
             "Vocabulary generation is not configured correctly."
         )
-    provider_name = value.strip().casefold()
-    if provider_name not in SUPPORTED_PROVIDERS:
+    return value.strip() or None
+
+
+def _token_parameter_setting() -> str:
+    value = _required_string_setting(
+        "LLM_MAX_TOKENS_PARAMETER",
+        message="Vocabulary generation is not configured correctly.",
+    ).casefold()
+    if value not in SUPPORTED_TOKEN_PARAMETERS:
         raise ProviderConfigurationError(
             "Vocabulary generation is not configured correctly."
         )
-    return provider_name
+    return value
 
 
 def _user_prompt(
@@ -161,110 +190,6 @@ def _user_prompt(
     )
 
 
-@dataclass(slots=True)
-class OpenAIVocabularyProvider:
-    client: Any
-    model: str
-    owns_client: bool = False
-    name: str = "openai"
-
-    def generate(
-        self,
-        *,
-        movie_title: str,
-        movie_reference: str,
-        item_count: int,
-        source: SourceDocument | None,
-    ) -> Any:
-        try:
-            response = self.client.responses.parse(
-                model=self.model,
-                input=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": _user_prompt(
-                            movie_title=movie_title,
-                            movie_reference=movie_reference,
-                            item_count=item_count,
-                            source=source,
-                        ),
-                    },
-                ],
-                text_format=VocabularyExtractionCandidate,
-            )
-            return response.output_parsed
-        except PydanticValidationError as exc:
-            logger.warning("OpenAI returned invalid vocabulary JSON", exc_info=True)
-            raise ProviderResponseError from exc
-        except Exception as exc:
-            logger.exception("OpenAI vocabulary generation failed")
-            raise ProviderRequestError from exc
-
-    def close(self) -> None:
-        if self.owns_client:
-            try:
-                self.client.close()
-            except Exception:
-                logger.warning("OpenAI client cleanup failed", exc_info=True)
-
-
-@dataclass(slots=True)
-class GeminiVocabularyProvider:
-    client: Any
-    model: str
-    config_type: Any
-    owns_client: bool = False
-    name: str = "gemini"
-
-    def generate(
-        self,
-        *,
-        movie_title: str,
-        movie_reference: str,
-        item_count: int,
-        source: SourceDocument | None,
-    ) -> Any:
-        try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=_user_prompt(
-                    movie_title=movie_title,
-                    movie_reference=movie_reference,
-                    item_count=item_count,
-                    source=source,
-                ),
-                config=self.config_type(
-                    system_instruction=SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    response_json_schema=(
-                        VocabularyExtractionCandidate.model_json_schema(by_alias=True)
-                    ),
-                ),
-            )
-            response_text = response.text
-        except Exception as exc:
-            logger.exception("Gemini vocabulary generation failed")
-            raise ProviderRequestError from exc
-
-        if not isinstance(response_text, str) or not response_text.strip():
-            logger.warning("Gemini returned an empty vocabulary response")
-            raise ProviderResponseError
-
-        try:
-            return VocabularyExtractionCandidate.model_validate_json(response_text)
-        except PydanticValidationError as exc:
-            logger.warning("Gemini returned invalid vocabulary JSON", exc_info=True)
-            raise ProviderResponseError from exc
-
-    def close(self) -> None:
-        if self.owns_client:
-            try:
-                self.client.close()
-            except Exception:
-                logger.warning("Gemini client cleanup failed", exc_info=True)
-
-
 def _usage_counter(container: Any, name: str) -> int | None:
     if container is None:
         return None
@@ -276,11 +201,12 @@ def _usage_counter(container: Any, name: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _log_fireworks_usage(
+def _log_llm_usage(
     response: Any,
     *,
     requested_candidates: int,
     source_characters: int,
+    reasoning_effort: str | None,
 ) -> None:
     usage = getattr(response, "usage", None)
     prompt_tokens = _usage_counter(usage, "prompt_tokens")
@@ -294,28 +220,34 @@ def _log_fireworks_usage(
     cached_tokens = _usage_counter(prompt_details, "cached_tokens")
 
     if prompt_tokens is None and completion_tokens is None and total_tokens is None:
-        usage_logger.warning("Fireworks did not return vocabulary usage counters")
+        usage_logger.warning("LLM did not return vocabulary usage counters")
         return
 
     usage_logger.info(
-        "Fireworks vocabulary usage: prompt_tokens=%s completion_tokens=%s "
+        "LLM vocabulary usage: prompt_tokens=%s completion_tokens=%s "
         "total_tokens=%s cached_prompt_tokens=%s requested_candidates=%d "
-        "source_characters=%d reasoning_effort=none",
+        "source_characters=%d reasoning_effort=%s",
         prompt_tokens,
         completion_tokens,
         total_tokens,
         cached_tokens,
         requested_candidates,
         source_characters,
+        reasoning_effort or "provider_default",
     )
 
 
 @dataclass(slots=True)
-class FireworksVocabularyProvider:
+class OpenAICompatibleVocabularyClient:
+    """Generate validated JSON through any compatible Chat Completions endpoint."""
+
     client: Any
     model: str
+    token_parameter: str
+    temperature: float | None = None
+    reasoning_effort: str | None = None
     owns_client: bool = False
-    name: str = "fireworks"
+    name: str = "llm"
 
     def generate(
         self,
@@ -338,34 +270,40 @@ class FireworksVocabularyProvider:
             )
             + "\nReturn JSON only and match the supplied response schema exactly."
         )
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=(
-                    FIREWORKS_COMPLETION_BASE_TOKENS
-                    + FIREWORKS_COMPLETION_TOKENS_PER_ITEM * item_count
-                ),
-                reasoning_effort="none",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "VocabularyExtractionCandidate",
-                        "schema": response_schema,
-                    },
+        request_options: dict[str, Any] = {
+            "model": self.model,
+            self.token_parameter: (
+                LLM_COMPLETION_BASE_TOKENS
+                + LLM_COMPLETION_TOKENS_PER_ITEM * item_count
+            ),
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "VocabularyExtractionCandidate",
+                    "schema": response_schema,
                 },
-            )
+            },
+        }
+        if self.temperature is not None:
+            request_options["temperature"] = self.temperature
+        if self.reasoning_effort is not None:
+            request_options["reasoning_effort"] = self.reasoning_effort
+
+        try:
+            response = self.client.chat.completions.create(**request_options)
         except Exception as exc:
-            logger.exception("Fireworks vocabulary generation failed")
+            logger.exception("LLM vocabulary generation failed")
             raise ProviderRequestError from exc
 
-        _log_fireworks_usage(
+        _log_llm_usage(
             response,
             requested_candidates=item_count,
             source_characters=len(source.text) if source is not None else 0,
+            reasoning_effort=self.reasoning_effort,
         )
 
         try:
@@ -373,26 +311,26 @@ class FireworksVocabularyProvider:
             finish_reason = choice.finish_reason
             response_text = choice.message.content
         except (AttributeError, IndexError, TypeError) as exc:
-            logger.warning("Fireworks returned a malformed response envelope")
+            logger.warning("LLM returned a malformed response envelope")
             raise ProviderResponseError from exc
 
         if finish_reason == "length":
-            logger.warning("Fireworks vocabulary response reached the token limit")
+            logger.warning("LLM vocabulary response reached the token limit")
             raise ProviderResponseError
         if finish_reason != "stop":
             logger.warning(
-                "Fireworks vocabulary response stopped with reason %s",
+                "LLM vocabulary response stopped with reason %s",
                 finish_reason,
             )
             raise ProviderResponseError
         if not isinstance(response_text, str) or not response_text.strip():
-            logger.warning("Fireworks returned an empty vocabulary response")
+            logger.warning("LLM returned an empty vocabulary response")
             raise ProviderResponseError
 
         try:
             return VocabularyExtractionCandidate.model_validate_json(response_text)
         except PydanticValidationError as exc:
-            logger.warning("Fireworks returned invalid vocabulary JSON", exc_info=True)
+            logger.warning("LLM returned invalid vocabulary JSON", exc_info=True)
             raise ProviderResponseError from exc
 
     def close(self) -> None:
@@ -400,101 +338,36 @@ class FireworksVocabularyProvider:
             try:
                 self.client.close()
             except Exception:
-                logger.warning("Fireworks client cleanup failed", exc_info=True)
+                logger.warning("LLM client cleanup failed", exc_info=True)
 
 
-def build_vocabulary_provider(*, client: Any | None = None) -> VocabularyProvider:
-    provider_name = selected_provider_name()
-
-    if provider_name == "openai":
-        model = _required_string_setting(
-            "OPENAI_MODEL",
-            message="Vocabulary generation is not configured correctly.",
-        )
-        owns_client = client is None
-        if client is None:
-            api_key = _required_string_setting(
-                "OPENAI_API_KEY",
-                message=(
-                    "Vocabulary generation is not configured. Please contact support."
-                ),
-            )
-            timeout = _positive_timeout_setting("OPENAI_TIMEOUT_SECONDS")
-            try:
-                from openai import OpenAI
-
-                client = OpenAI(api_key=api_key, timeout=timeout, max_retries=0)
-            except ImportError as exc:
-                raise ProviderConfigurationError(
-                    "Vocabulary generation is temporarily unavailable."
-                ) from exc
-            except Exception as exc:
-                logger.exception("OpenAI client configuration failed")
-                raise ProviderConfigurationError(
-                    "Vocabulary generation is not configured correctly."
-                ) from exc
-        return OpenAIVocabularyProvider(
-            client=client, model=model, owns_client=owns_client
-        )
-
-    if provider_name == "gemini":
-        model = _required_string_setting(
-            "GEMINI_MODEL",
-            message="Vocabulary generation is not configured correctly.",
-        )
-        try:
-            from google import genai
-            from google.genai import types
-        except ImportError as exc:
-            raise ProviderConfigurationError(
-                "Vocabulary generation is temporarily unavailable."
-            ) from exc
-
-        owns_client = client is None
-        if client is None:
-            api_key = _required_string_setting(
-                "GEMINI_API_KEY",
-                message=(
-                    "Vocabulary generation is not configured. Please contact support."
-                ),
-            )
-            timeout = _positive_timeout_setting("GEMINI_TIMEOUT_SECONDS")
-            try:
-                client = genai.Client(
-                    api_key=api_key,
-                    http_options=types.HttpOptions(timeout=int(timeout * 1000)),
-                )
-            except Exception as exc:
-                logger.exception("Gemini client configuration failed")
-                raise ProviderConfigurationError(
-                    "Vocabulary generation is not configured correctly."
-                ) from exc
-        return GeminiVocabularyProvider(
-            client=client,
-            model=model,
-            config_type=types.GenerateContentConfig,
-            owns_client=owns_client,
-        )
-
+def build_vocabulary_llm_client(*, client: Any | None = None) -> VocabularyLLMClient:
     model = _required_string_setting(
-        "FIREWORKS_MODEL",
+        "LLM_MODEL",
         message="Vocabulary generation is not configured correctly.",
     )
+    token_parameter = _token_parameter_setting()
+    temperature = _optional_float_setting("LLM_TEMPERATURE")
+    reasoning_effort = _optional_string_setting("LLM_REASONING_EFFORT")
     owns_client = client is None
     if client is None:
         api_key = _required_string_setting(
-            "FIREWORKS_API_KEY",
+            "LLM_API_KEY",
             message=(
                 "Vocabulary generation is not configured. Please contact support."
             ),
         )
-        timeout = _positive_timeout_setting("FIREWORKS_TIMEOUT_SECONDS")
+        base_url = _required_string_setting(
+            "LLM_BASE_URL",
+            message="Vocabulary generation is not configured correctly.",
+        )
+        timeout = _positive_timeout_setting("LLM_TIMEOUT_SECONDS")
         try:
             from openai import OpenAI
 
             client = OpenAI(
                 api_key=api_key,
-                base_url=FIREWORKS_BASE_URL,
+                base_url=base_url,
                 timeout=timeout,
                 max_retries=0,
             )
@@ -503,12 +376,15 @@ def build_vocabulary_provider(*, client: Any | None = None) -> VocabularyProvide
                 "Vocabulary generation is temporarily unavailable."
             ) from exc
         except Exception as exc:
-            logger.exception("Fireworks client configuration failed")
+            logger.exception("LLM client configuration failed")
             raise ProviderConfigurationError(
                 "Vocabulary generation is not configured correctly."
             ) from exc
-    return FireworksVocabularyProvider(
+    return OpenAICompatibleVocabularyClient(
         client=client,
         model=model,
+        token_parameter=token_parameter,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
         owns_client=owns_client,
     )

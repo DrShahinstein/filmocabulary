@@ -4,7 +4,7 @@ Filmocabulary is a smart vocabulary learning web-app that transforms film subtit
 
 ## Features
 
-- OpenAI, Gemini, and Fireworks LLM providers with structured, validated output
+- Universal OpenAI-compatible LLM integration with structured, validated output
 - Automatic English subtitle lookup through OpenSubtitles
 - Optional `.srt` or `.txt` upload when automatic lookup is unavailable
 - Local subtitle filtering and per-user caching to reduce repeated input-token usage
@@ -52,16 +52,55 @@ If PowerShell blocks activation:
 
 ## Configuration
 
-Vocabulary generation is powered by an LLM. To use it, connect your own model with its API key.
+Vocabulary generation is powered by a universal OpenAI-compatible client. Connect any
+provider that supports the Chat Completions API and JSON Schema structured outputs by
+setting its API key, model, and base URL. There is no provider allowlist or
+provider-specific application code.
 
 Example:
 ```dotenv
 # .env
 ...
-VOCABULARY_LLM_PROVIDER=fireworks
-FIREWORKS_API_KEY=your-key
+LLM_API_KEY=your-key
+LLM_MODEL=your-provider-model-name
+LLM_BASE_URL=https://your-provider.example/v1
 ...
 ```
+
+`LLM_BASE_URL` defaults to `https://api.openai.com/v1`, so an OpenAI configuration
+only needs `LLM_API_KEY` and `LLM_MODEL`. Other compatible services use their published
+base URL. For example:
+
+```dotenv
+# Gemini OpenAI compatibility endpoint
+LLM_API_KEY=your-gemini-key
+LLM_MODEL=gemini-3.6-flash
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+```
+
+```dotenv
+# Fireworks OpenAI compatibility endpoint
+LLM_API_KEY=your-fireworks-key
+LLM_MODEL=accounts/fireworks/models/deepseek-v4-flash-0731
+LLM_BASE_URL=https://api.fireworks.ai/inference/v1
+LLM_REASONING_EFFORT=none
+```
+
+Generic optional request controls preserve model-specific requirements without adding
+provider branches:
+
+```dotenv
+LLM_TIMEOUT_SECONDS=180
+LLM_TEMPERATURE=
+LLM_REASONING_EFFORT=
+LLM_MAX_TOKENS_PARAMETER=max_tokens
+```
+
+Leave temperature or reasoning effort blank to use the provider's default. Set
+`LLM_MAX_TOKENS_PARAMETER=max_completion_tokens` for models that require the newer
+Chat Completions parameter. The completion budget still scales as `512 + 160` tokens
+per requested candidate. The previous `VOCABULARY_LLM_PROVIDER`, `OPENAI_*`, `GEMINI_*`,
+and `FIREWORKS_*` variables are no longer read.
 
 Automatic subtitle grounding is optional but also recommended:
 ```dotenv
@@ -103,9 +142,10 @@ words from retained sentences, so phrasal verbs, idioms, and surrounding context
 intact. A versioned negative cache also avoids repeating subtitle work when no suitable
 advanced source text is found.
 
-For Fireworks, reasoning is disabled and the completion allowance scales with the candidate
-count (`512 + 160` tokens per requested candidate). Usage logs record prompt, completion,
-total, and candidate-yield counts without logging subtitle or response content.
+The generic LLM client applies the same completion allowance to every compatible provider
+(`512 + 160` tokens per requested candidate). Reasoning remains disabled when
+`LLM_REASONING_EFFORT=none` is configured. Usage logs record prompt, completion, total,
+and candidate-yield counts without logging subtitle or response content.
 
 Together, these measures reduce repeated downloads and unnecessary input and output tokens.
 Actual usage still varies by movie, provider, requested entry count, and cache availability,

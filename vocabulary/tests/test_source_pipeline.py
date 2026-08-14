@@ -1,5 +1,6 @@
 from unittest.mock import call, patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
@@ -201,13 +202,23 @@ class PreparedVocabularySourceTests(TestCase):
 
         self.assertEqual(acquire_source.call_count, 1)
         movie = Movie.objects.get(user=self.user, title="Zodiac")
+        small_budget = subtitle_filter_budget(
+            10,
+            base_max_words=settings.VOCABULARY_FILTER_MAX_WORDS,
+            base_max_characters=settings.VOCABULARY_FILTER_MAX_CHARACTERS,
+        )
+        large_budget = subtitle_filter_budget(
+            100,
+            base_max_words=settings.VOCABULARY_FILTER_MAX_WORDS,
+            base_max_characters=settings.VOCABULARY_FILTER_MAX_CHARACTERS,
+        )
         self.assertLessEqual(
             len(small.source.text),
-            subtitle_filter_budget(10).max_characters,
+            small_budget.max_characters,
         )
         self.assertLessEqual(
             len(large.source.text),
-            subtitle_filter_budget(100).max_characters,
+            large_budget.max_characters,
         )
         self.assertGreater(len(large.source.text), len(small.source.text))
         self.assertEqual(large.source.text, movie.filtered_subtitle_text)

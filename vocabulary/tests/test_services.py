@@ -13,7 +13,6 @@ from vocabulary.ingestion import SourceDocument
 from vocabulary.models import VocabularyItem
 from vocabulary.schemas import (
     VocabularyExtractionCandidate,
-    VocabularyExtractionResponse,
 )
 from vocabulary.services import (
     VocabularyYieldReason,
@@ -27,7 +26,11 @@ from vocabulary.services import (
 from .factories import vocabulary_payload
 
 
-@override_settings(VOCABULARY_LLM_PROVIDER="openai")
+@override_settings(
+    LLM_MODEL="test-structured-model",
+    LLM_REASONING_EFFORT="none",
+    LLM_MAX_TOKENS_PARAMETER="max_tokens",
+)
 class VocabularyGenerationServiceTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -35,19 +38,9 @@ class VocabularyGenerationServiceTests(TestCase):
             username="learner", password="test-pass-42"
         )
 
-    def openai_client_with_payload(self, payload):
-        client = Mock()
-        client.responses.parse.return_value = SimpleNamespace(output_parsed=payload)
-        return client
-
-    def gemini_client_with_payload(self, payload):
-        client = Mock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps(payload)
-        )
-        return client
-
-    def fireworks_client_with_payload(self, payload, *, finish_reason="stop"):
+    def llm_client_with_payload(self, payload, *, finish_reason="stop"):
+        if hasattr(payload, "model_dump"):
+            payload = payload.model_dump(mode="json", by_alias=True)
         client = Mock()
         client.chat.completions.create.return_value = SimpleNamespace(
             usage=SimpleNamespace(
@@ -65,13 +58,9 @@ class VocabularyGenerationServiceTests(TestCase):
         )
         return client
 
-    @override_settings(
-        OPENAI_MODEL="test-structured-model",
-        GEMINI_API_KEY="",
-    )
     def test_creates_movie_and_validated_items_atomically(self):
         parsed = VocabularyExtractionCandidate.model_validate(vocabulary_payload())
-        client = self.openai_client_with_payload(parsed)
+        client = self.llm_client_with_payload(parsed)
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -86,15 +75,17 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(result.skipped_count, 0)
         self.assertEqual(Movie.objects.get().user, self.user)
         self.assertEqual(VocabularyItem.objects.get().blank_sentence.count("___"), 1)
-        request_kwargs = client.responses.parse.call_args.kwargs
+        request_kwargs = client.chat.completions.create.call_args.kwargs
         self.assertEqual(request_kwargs["model"], "test-structured-model")
-        self.assertIs(request_kwargs["text_format"], VocabularyExtractionCandidate)
+        self.assertEqual(request_kwargs["max_tokens"], 3_712)
+        self.assertEqual(request_kwargs["reasoning_effort"], "none")
+        self.assertEqual(request_kwargs["response_format"]["type"], "json_schema")
 
     def test_accepts_and_persists_one_hundred_items(self):
         parsed = VocabularyExtractionCandidate.model_validate(
             vocabulary_payload(item_count=100)
         )
-        client = self.openai_client_with_payload(parsed)
+        client = self.llm_client_with_payload(parsed)
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -106,13 +97,15 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertEqual(result.created_count, 100)
         self.assertEqual(VocabularyItem.objects.count(), 100)
-        prompt = client.responses.parse.call_args.kwargs["input"][1]["content"]
+        prompt = client.chat.completions.create.call_args.kwargs["messages"][1][
+            "content"
+        ]
         self.assertIn('"requested_items": 115', prompt)
 
     def test_accepts_and_persists_b1_backfill_item(self):
         payload = vocabulary_payload(word="abandon")
         payload["items"][0]["CEFR_level"] = "B1"
-        client = self.openai_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -126,7 +119,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(VocabularyItem.objects.get().cefr_level, "B1")
 
     def test_trims_provider_overrun_and_keeps_requested_count(self):
-        client = self.openai_client_with_payload(vocabulary_payload(item_count=18))
+        client = self.llm_client_with_payload(vocabulary_payload(item_count=18))
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -138,7 +131,9 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertEqual(result.created_count, 2)
         self.assertEqual(VocabularyItem.objects.count(), 2)
-        prompt = client.responses.parse.call_args.kwargs["input"][1]["content"]
+        prompt = client.chat.completions.create.call_args.kwargs["messages"][1][
+            "content"
+        ]
         self.assertIn('"requested_items": 17', prompt)
 
     def test_rejects_item_count_above_one_hundred(self):
@@ -155,44 +150,8 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(Movie.objects.exists())
 
-    @override_settings(
-        VOCABULARY_LLM_PROVIDER="gemini",
-        GEMINI_MODEL="gemini-test-structured-model",
-    )
-    def test_gemini_creates_validated_items_with_structured_output(self):
-        client = self.gemini_client_with_payload(vocabulary_payload())
-
-        result = generate_and_save_vocabulary(
-            user=self.user,
-            title="Zodiac",
-            release_year=2007,
-            item_count=5,
-            client=client,
-        )
-
-        self.assertTrue(result.movie_created)
-        self.assertEqual(result.created_count, 1)
-        request_kwargs = client.models.generate_content.call_args.kwargs
-        self.assertEqual(request_kwargs["model"], "gemini-test-structured-model")
-        self.assertIn('"movie_reference": "Zodiac (2007)"', request_kwargs["contents"])
-        config = request_kwargs["config"]
-        self.assertIn("Strictly exclude A1-A2 vocabulary", config.system_instruction)
-        self.assertIn("Quality outranks count.", config.system_instruction)
-        self.assertIn(
-            '"mental projection" is not advanced merely because its concept sounds complex',
-            config.system_instruction,
-        )
-        self.assertIn("Verbatim source grounding is non-negotiable", config.system_instruction)
-        self.assertEqual(config.response_mime_type, "application/json")
-        item_schema = config.response_json_schema["$defs"]["VocabularyItemCandidate"]
-        self.assertIn("CEFR_level", item_schema["properties"])
-
-    @override_settings(
-        VOCABULARY_LLM_PROVIDER="fireworks",
-        FIREWORKS_MODEL="accounts/fireworks/models/deepseek-test",
-    )
-    def test_fireworks_creates_validated_items_with_structured_output(self):
-        client = self.fireworks_client_with_payload(vocabulary_payload(item_count=20))
+    def test_generic_client_uses_structured_output_contract(self):
+        client = self.llm_client_with_payload(vocabulary_payload(item_count=20))
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -205,9 +164,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertTrue(result.movie_created)
         self.assertEqual(result.created_count, 5)
         request_kwargs = client.chat.completions.create.call_args.kwargs
-        self.assertEqual(
-            request_kwargs["model"], "accounts/fireworks/models/deepseek-test"
-        )
+        self.assertEqual(request_kwargs["model"], "test-structured-model")
         self.assertEqual(request_kwargs["max_tokens"], 3_712)
         self.assertEqual(request_kwargs["reasoning_effort"], "none")
         self.assertNotIn("extra_body", request_kwargs)
@@ -241,12 +198,8 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertNotIn("blank_sentence", item_schema["properties"])
         client.close.assert_not_called()
 
-    @override_settings(
-        VOCABULARY_LLM_PROVIDER="fireworks",
-        FIREWORKS_MODEL="accounts/fireworks/models/deepseek-test",
-    )
-    def test_fireworks_scales_output_limit_for_thirty_items(self):
-        client = self.fireworks_client_with_payload(vocabulary_payload(item_count=45))
+    def test_generic_client_scales_output_limit_for_thirty_items(self):
+        client = self.llm_client_with_payload(vocabulary_payload(item_count=45))
 
         generate_and_save_vocabulary(
             user=self.user,
@@ -259,12 +212,8 @@ class VocabularyGenerationServiceTests(TestCase):
         request_kwargs = client.chat.completions.create.call_args.kwargs
         self.assertEqual(request_kwargs["max_tokens"], 7_712)
 
-    @override_settings(
-        VOCABULARY_LLM_PROVIDER="fireworks",
-        FIREWORKS_MODEL="accounts/fireworks/models/deepseek-test",
-    )
-    def test_fireworks_logs_usage_without_response_content(self):
-        client = self.fireworks_client_with_payload(vocabulary_payload(item_count=20))
+    def test_generic_client_logs_usage_without_response_content(self):
+        client = self.llm_client_with_payload(vocabulary_payload(item_count=20))
 
         with self.assertLogs("vocabulary.usage", level="INFO") as logs:
             generate_and_save_vocabulary(
@@ -284,10 +233,9 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertNotIn("scrutinize", usage_log)
 
     @override_settings(
-        VOCABULARY_LLM_PROVIDER="fireworks",
-        FIREWORKS_MODEL="accounts/fireworks/models/deepseek-contract-test",
+        LLM_MODEL="vendor/model-contract-test",
     )
-    def test_fireworks_openai_compatibility_transport_contract(self):
+    def test_generic_openai_compatibility_transport_contract(self):
         captured_request = {}
 
         def handle_request(request):
@@ -299,7 +247,7 @@ class VocabularyGenerationServiceTests(TestCase):
                     "id": "test-completion",
                     "object": "chat.completion",
                     "created": 0,
-                    "model": "accounts/fireworks/models/deepseek-contract-test",
+                    "model": "vendor/model-contract-test",
                     "choices": [
                         {
                             "index": 0,
@@ -321,8 +269,8 @@ class VocabularyGenerationServiceTests(TestCase):
 
         http_client = httpx.Client(transport=httpx.MockTransport(handle_request))
         provider_client = OpenAI(
-            api_key="fireworks-contract-test-key",
-            base_url="https://api.fireworks.ai/inference/v1",
+            api_key="generic-contract-test-key",
+            base_url="https://llm.example/v1",
             http_client=http_client,
         )
         self.addCleanup(provider_client.close)
@@ -338,7 +286,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(result.created_count, 5)
         self.assertEqual(
             captured_request["url"],
-            "https://api.fireworks.ai/inference/v1/chat/completions",
+            "https://llm.example/v1/chat/completions",
         )
         body = captured_request["body"]
         self.assertEqual(body["max_tokens"], 3_712)
@@ -359,7 +307,7 @@ class VocabularyGenerationServiceTests(TestCase):
 
     def test_reuses_owned_movie_and_skips_existing_term(self):
         parsed = VocabularyExtractionCandidate.model_validate(vocabulary_payload())
-        client = self.openai_client_with_payload(parsed)
+        client = self.llm_client_with_payload(parsed)
         first = generate_and_save_vocabulary(
             user=self.user, title="Zodiac", release_year=2007, client=client
         )
@@ -376,7 +324,7 @@ class VocabularyGenerationServiceTests(TestCase):
 
     def test_rejects_wrong_movie_without_writing_to_database(self):
         payload = vocabulary_payload(movie_title="Arrival")
-        client = self.openai_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         with self.assertRaises(VocabularyResponseError):
             generate_and_save_vocabulary(
@@ -388,7 +336,7 @@ class VocabularyGenerationServiceTests(TestCase):
 
     def test_source_is_sent_as_untrusted_evidence_and_grounded_items_are_saved(self):
         parsed = VocabularyExtractionCandidate.model_validate(vocabulary_payload())
-        client = self.openai_client_with_payload(parsed)
+        client = self.llm_client_with_payload(parsed)
         source = SourceDocument(
             text="The reporter decided to scrutinize every detail.",
             format="script",
@@ -405,7 +353,9 @@ class VocabularyGenerationServiceTests(TestCase):
         )
 
         self.assertEqual(result.created_count, 1)
-        user_prompt = client.responses.parse.call_args.kwargs["input"][1]["content"]
+        user_prompt = client.chat.completions.create.call_args.kwargs["messages"][1][
+            "content"
+        ]
         self.assertIn("untrusted reference data", user_prompt)
         self.assertIn("SOURCE_TEXT_START", user_prompt)
         self.assertIn(source.text, user_prompt)
@@ -429,7 +379,7 @@ class VocabularyGenerationServiceTests(TestCase):
             ),
             format="script",
         )
-        client = self.openai_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -445,7 +395,7 @@ class VocabularyGenerationServiceTests(TestCase):
     def test_rejects_model_supplied_blank_not_present_in_wire_schema(self):
         payload = vocabulary_payload()
         payload["items"][0]["blank_sentence"] = "The model supplied the wrong ___."
-        client = self.openai_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         with self.assertRaises(VocabularyResponseError):
             generate_and_save_vocabulary(
@@ -463,26 +413,7 @@ class VocabularyGenerationServiceTests(TestCase):
         payload["items"][1]["example_sentence"] = (
             "The reporter scrutinized every small detail."
         )
-        client = self.openai_client_with_payload(payload)
-
-        result = generate_and_save_vocabulary(
-            user=self.user,
-            title="Zodiac",
-            release_year=2007,
-            item_count=2,
-            client=client,
-        )
-
-        self.assertEqual(result.created_count, 2)
-        client.responses.parse.assert_called_once()
-
-    @override_settings(VOCABULARY_LLM_PROVIDER="fireworks")
-    def test_fireworks_surplus_absorbs_rejection_without_refill(self):
-        payload = vocabulary_payload(item_count=17)
-        payload["items"][1]["example_sentence"] = (
-            "The reporter scrutinized every small detail."
-        )
-        client = self.fireworks_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -500,7 +431,7 @@ class VocabularyGenerationServiceTests(TestCase):
         payload["items"][-1]["example_sentence"] = (
             "The reporter reviewed every small detail."
         )
-        client = self.openai_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         with self.assertLogs("vocabulary.usage", level="INFO") as logs:
             result = generate_and_save_vocabulary(
@@ -524,7 +455,7 @@ class VocabularyGenerationServiceTests(TestCase):
             ),
         )
         self.assertEqual(VocabularyItem.objects.count(), 50)
-        client.responses.parse.assert_called_once()
+        client.chat.completions.create.assert_called_once()
         yield_log = "\n".join(logs.output)
         self.assertIn("initial_returned=51", yield_log)
         self.assertIn("initial_accepted=50", yield_log)
@@ -536,13 +467,12 @@ class VocabularyGenerationServiceTests(TestCase):
             yield_log,
         )
 
-    @override_settings(VOCABULARY_LLM_PROVIDER="fireworks")
-    def test_fireworks_underfilled_response_remains_single_shot(self):
+    def test_underfilled_response_remains_single_shot(self):
         payload = vocabulary_payload(item_count=3)
         payload["items"][-1]["example_sentence"] = (
             "The reporter reviewed every small detail."
         )
-        client = self.fireworks_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         result = generate_and_save_vocabulary(
             user=self.user,
@@ -564,7 +494,7 @@ class VocabularyGenerationServiceTests(TestCase):
         payload["items"][0]["example_sentence"] = (
             "The reporter scrutinized every small detail."
         )
-        client = self.openai_client_with_payload(payload)
+        client = self.llm_client_with_payload(payload)
 
         with self.assertRaises(VocabularyResponseError):
             generate_and_save_vocabulary(
@@ -579,7 +509,7 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertFalse(VocabularyItem.objects.exists())
 
     def test_rejects_term_that_is_only_a_source_substring(self):
-        client = self.openai_client_with_payload(vocabulary_payload())
+        client = self.llm_client_with_payload(vocabulary_payload())
         source = SourceDocument(
             text="They will overscrutinize the details.",
             format="script",
@@ -610,11 +540,11 @@ class VocabularyGenerationServiceTests(TestCase):
                 source=SourceDocument(text=" ", format="script"),
             )
 
-        client.responses.parse.assert_not_called()
+        client.chat.completions.create.assert_not_called()
 
     def test_provider_error_is_converted_and_writes_nothing(self):
         client = Mock()
-        client.responses.parse.side_effect = RuntimeError("provider details")
+        client.chat.completions.create.side_effect = RuntimeError("provider details")
 
         with self.assertRaises(VocabularyProviderError):
             generate_and_save_vocabulary(
@@ -623,68 +553,7 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(Movie.objects.exists())
 
-    @override_settings(VOCABULARY_LLM_PROVIDER="gemini")
-    def test_gemini_provider_error_is_converted_and_writes_nothing(self):
-        client = Mock()
-        client.models.generate_content.side_effect = RuntimeError("provider details")
-
-        with self.assertRaises(VocabularyProviderError):
-            generate_and_save_vocabulary(
-                user=self.user,
-                title="Zodiac",
-                release_year=2007,
-                client=client,
-            )
-
-        self.assertFalse(Movie.objects.exists())
-
-    @override_settings(VOCABULARY_LLM_PROVIDER="gemini")
-    def test_gemini_rejects_empty_response_without_writing(self):
-        client = Mock()
-        client.models.generate_content.return_value = SimpleNamespace(text=None)
-
-        with self.assertRaises(VocabularyResponseError):
-            generate_and_save_vocabulary(
-                user=self.user,
-                title="Zodiac",
-                release_year=2007,
-                client=client,
-            )
-
-        self.assertFalse(Movie.objects.exists())
-
-    @override_settings(VOCABULARY_LLM_PROVIDER="gemini")
-    def test_gemini_rejects_malformed_json_without_writing(self):
-        client = Mock()
-        client.models.generate_content.return_value = SimpleNamespace(text="{")
-
-        with self.assertRaises(VocabularyResponseError):
-            generate_and_save_vocabulary(
-                user=self.user,
-                title="Zodiac",
-                release_year=2007,
-                client=client,
-            )
-
-        self.assertFalse(Movie.objects.exists())
-
-    @override_settings(VOCABULARY_LLM_PROVIDER="fireworks")
-    def test_fireworks_provider_error_is_converted_and_writes_nothing(self):
-        client = Mock()
-        client.chat.completions.create.side_effect = RuntimeError("provider details")
-
-        with self.assertRaises(VocabularyProviderError):
-            generate_and_save_vocabulary(
-                user=self.user,
-                title="Zodiac",
-                release_year=2007,
-                client=client,
-            )
-
-        self.assertFalse(Movie.objects.exists())
-
-    @override_settings(VOCABULARY_LLM_PROVIDER="fireworks")
-    def test_fireworks_rejects_empty_response_without_writing(self):
+    def test_rejects_empty_response_without_writing(self):
         client = Mock()
         client.chat.completions.create.return_value = SimpleNamespace(
             choices=[
@@ -705,8 +574,7 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(Movie.objects.exists())
 
-    @override_settings(VOCABULARY_LLM_PROVIDER="fireworks")
-    def test_fireworks_rejects_empty_choices_without_writing(self):
+    def test_rejects_empty_choices_without_writing(self):
         client = Mock()
         client.chat.completions.create.return_value = SimpleNamespace(choices=[])
 
@@ -720,9 +588,8 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(Movie.objects.exists())
 
-    @override_settings(VOCABULARY_LLM_PROVIDER="fireworks")
-    def test_fireworks_rejects_truncated_response_without_writing(self):
-        client = self.fireworks_client_with_payload(
+    def test_rejects_truncated_response_without_writing(self):
+        client = self.llm_client_with_payload(
             vocabulary_payload(), finish_reason="length"
         )
 
@@ -736,8 +603,7 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(Movie.objects.exists())
 
-    @override_settings(VOCABULARY_LLM_PROVIDER="fireworks")
-    def test_fireworks_rejects_malformed_json_without_writing(self):
+    def test_rejects_malformed_json_without_writing(self):
         client = Mock()
         client.chat.completions.create.return_value = SimpleNamespace(
             choices=[
@@ -758,7 +624,7 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(Movie.objects.exists())
 
-    @override_settings(OPENAI_API_KEY="")
+    @override_settings(LLM_API_KEY="")
     def test_missing_api_key_fails_without_writing(self):
         with self.assertRaises(VocabularyConfigurationError):
             generate_and_save_vocabulary(
@@ -767,69 +633,35 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(Movie.objects.exists())
 
-    @override_settings(VOCABULARY_LLM_PROVIDER="gemini", GEMINI_API_KEY="")
-    def test_missing_selected_gemini_key_fails_without_writing(self):
+    @override_settings(LLM_MODEL="")
+    def test_missing_model_fails_without_writing(self):
         with self.assertRaises(VocabularyConfigurationError):
             generate_and_save_vocabulary(
-                user=self.user, title="Zodiac", release_year=2007
+                user=self.user, title="Zodiac", release_year=2007, client=Mock()
+            )
+
+        self.assertFalse(Movie.objects.exists())
+
+    @override_settings(LLM_MAX_TOKENS_PARAMETER="unsupported")
+    def test_invalid_token_parameter_fails_without_writing(self):
+        with self.assertRaises(VocabularyConfigurationError):
+            generate_and_save_vocabulary(
+                user=self.user, title="Zodiac", release_year=2007, client=Mock()
             )
 
         self.assertFalse(Movie.objects.exists())
 
     @override_settings(
-        VOCABULARY_LLM_PROVIDER="fireworks",
-        FIREWORKS_API_KEY="",
-    )
-    def test_missing_selected_fireworks_key_fails_without_writing(self):
-        with self.assertRaises(VocabularyConfigurationError):
-            generate_and_save_vocabulary(
-                user=self.user, title="Zodiac", release_year=2007
-            )
-
-        self.assertFalse(Movie.objects.exists())
-
-    @override_settings(VOCABULARY_LLM_PROVIDER="unsupported")
-    def test_unknown_provider_fails_without_writing(self):
-        with self.assertRaises(VocabularyConfigurationError):
-            generate_and_save_vocabulary(
-                user=self.user,
-                title="Zodiac",
-                release_year=2007,
-                client=Mock(),
-            )
-
-        self.assertFalse(Movie.objects.exists())
-
-    @override_settings(
-        VOCABULARY_LLM_PROVIDER="gemini",
-        GEMINI_API_KEY="gemini-test-key",
-        GEMINI_TIMEOUT_SECONDS=12.5,
-        OPENAI_API_KEY="",
-    )
-    @patch("google.genai.Client")
-    def test_gemini_builds_and_closes_owned_client(self, client_type):
-        provider_client = client_type.return_value
-        provider_client.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps(vocabulary_payload())
-        )
-
-        generate_and_save_vocabulary(
-            user=self.user, title="Zodiac", release_year=2007
-        )
-
-        http_options = client_type.call_args.kwargs["http_options"]
-        self.assertEqual(http_options.timeout, 12_500)
-        provider_client.close.assert_called_once_with()
-
-    @override_settings(
-        VOCABULARY_LLM_PROVIDER="fireworks",
-        FIREWORKS_API_KEY="fireworks-test-key",
-        FIREWORKS_TIMEOUT_SECONDS=18.5,
-        OPENAI_API_KEY="",
-        GEMINI_API_KEY="",
+        LLM_API_KEY="generic-test-key",
+        LLM_MODEL="vendor/model-name",
+        LLM_BASE_URL="https://vendor.example/v1",
+        LLM_TIMEOUT_SECONDS=18.5,
+        LLM_TEMPERATURE="0",
+        LLM_REASONING_EFFORT="none",
+        LLM_MAX_TOKENS_PARAMETER="max_tokens",
     )
     @patch("openai.OpenAI")
-    def test_fireworks_builds_and_closes_owned_client(self, client_type):
+    def test_builds_configured_generic_client_and_closes_it(self, client_type):
         provider_client = client_type.return_value
         provider_client.chat.completions.create.return_value = SimpleNamespace(
             choices=[
@@ -848,15 +680,38 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertEqual(
             client_type.call_args.kwargs["base_url"],
-            "https://api.fireworks.ai/inference/v1",
+            "https://vendor.example/v1",
         )
+        self.assertEqual(client_type.call_args.kwargs["api_key"], "generic-test-key")
         self.assertEqual(client_type.call_args.kwargs["timeout"], 18.5)
         self.assertEqual(client_type.call_args.kwargs["max_retries"], 0)
+        request_kwargs = provider_client.chat.completions.create.call_args.kwargs
+        self.assertEqual(request_kwargs["model"], "vendor/model-name")
+        self.assertEqual(request_kwargs["temperature"], 0.0)
+        self.assertEqual(request_kwargs["reasoning_effort"], "none")
         provider_client.close.assert_called_once_with()
+
+    @override_settings(
+        LLM_TEMPERATURE="",
+        LLM_REASONING_EFFORT="",
+        LLM_MAX_TOKENS_PARAMETER="max_completion_tokens",
+    )
+    def test_optional_parameters_can_use_provider_defaults(self):
+        client = self.llm_client_with_payload(vocabulary_payload())
+
+        generate_and_save_vocabulary(
+            user=self.user, title="Zodiac", release_year=2007, client=client
+        )
+
+        request_kwargs = client.chat.completions.create.call_args.kwargs
+        self.assertIn("max_completion_tokens", request_kwargs)
+        self.assertNotIn("max_tokens", request_kwargs)
+        self.assertNotIn("temperature", request_kwargs)
+        self.assertNotIn("reasoning_effort", request_kwargs)
 
     def test_database_failure_rolls_back_new_movie(self):
         parsed = VocabularyExtractionCandidate.model_validate(vocabulary_payload())
-        client = self.openai_client_with_payload(parsed)
+        client = self.llm_client_with_payload(parsed)
 
         with patch.object(
             VocabularyItem.objects, "bulk_create", side_effect=IntegrityError("boom")
