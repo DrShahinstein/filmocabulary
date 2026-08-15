@@ -40,7 +40,9 @@
             </button>
         </form>
 
-        <p class="auth-panel__switch">New to Filmocabulary? <a href="{% url 'accounts:signup' %}">Create an account</a></p>
+        {% if signup_enabled %}
+            <p class="auth-panel__switch">New to Filmocabulary? <a href="{% url 'accounts:signup' %}">Create an account</a></p>
+        {% endif %}
     </section>
 </div>
 {% endblock %}

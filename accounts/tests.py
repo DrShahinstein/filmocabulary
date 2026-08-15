@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 
@@ -19,6 +19,18 @@ class SignUpViewTests(TestCase):
         self.assertRedirects(response, reverse("movies:dashboard"))
         self.assertTrue(get_user_model().objects.filter(username="learner").exists())
         self.assertEqual(int(self.client.session["_auth_user_id"]), 1)
+
+    @override_settings(SIGNUP_ENABLED=False)
+    def test_signup_returns_not_found_when_registration_is_disabled(self):
+        response = self.client.get(reverse("accounts:signup"))
+
+        self.assertEqual(response.status_code, 404)
+
+    @override_settings(SIGNUP_ENABLED=False)
+    def test_login_does_not_offer_signup_when_registration_is_disabled(self):
+        response = self.client.get(reverse("login"))
+
+        self.assertNotContains(response, reverse("accounts:signup"))
 
     def test_database_rejects_case_insensitive_duplicate_email(self):
         user_model = get_user_model()

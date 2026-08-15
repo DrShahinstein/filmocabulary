@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="$PROJECT_DIR/.venv/bin/python"
+GUNICORN="$PROJECT_DIR/.venv/bin/gunicorn"
+
+cd "$PROJECT_DIR"
+umask 077
+export DJANGO_SETTINGS_MODULE=config.settings.production
+
+if [[ ! -x "$PYTHON" ]]; then
+    echo "Missing .venv. Create it and install requirements-production.txt first." >&2
+    exit 1
+fi
+
+prepare() {
+    "$PYTHON" manage.py migrate --noinput
+    "$PYTHON" manage.py collectstatic --noinput
+    "$PYTHON" manage.py check
+}
+
+command="${1:-start}"
+case "$command" in
+    start)
+        if [[ ! -x "$GUNICORN" ]]; then
+            echo "Gunicorn is missing. Install requirements-production.txt in .venv." >&2
+            exit 1
+        fi
+        prepare
+        exec "$GUNICORN" --config config/gunicorn.py config.wsgi:application
+        ;;
+    prepare)
+        prepare
+        ;;
+    backup)
+        shift
+        exec "$PYTHON" manage.py backup_database "$@"
+        ;;
+    manage)
+        shift
+        exec "$PYTHON" manage.py "$@"
+        ;;
+    *)
+        echo "Usage: scripts/home {start|prepare|backup|manage [django arguments]}" >&2
+        exit 2
+        ;;
+esac

@@ -68,7 +68,9 @@
                 {% else %}
                     <nav class="guest-nav" aria-label="Account navigation">
                         <a class="button button--quiet" href="{% url 'login' %}">Sign in</a>
-                        <a class="button button--primary button--small" href="{% url 'accounts:signup' %}">Create account</a>
+                        {% if signup_enabled %}
+                            <a class="button button--primary button--small" href="{% url 'accounts:signup' %}">Create account</a>
+                        {% endif %}
                     </nav>
                 {% endif %}
             </div>

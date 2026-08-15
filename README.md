@@ -17,7 +17,7 @@ Filmocabulary is a smart vocabulary learning web-app that transforms film subtit
 
 - Python 3.11+
 - Django 5.2
-- SQLite for development; PostgreSQL for production
+- SQLite
 - HTMX, native JavaScript, and custom CSS
 - Pydantic for LLM response validation
 
@@ -126,25 +126,6 @@ python manage.py check
 python manage.py makemigrations --check --dry-run
 ```
 
-## Production
+## Home Production
 
-Production settings require `DJANGO_SETTINGS_MODULE=config.settings.production`,
-`DATABASE_URL`, `ALLOWED_HOSTS`, and a strong `DJANGO_SECRET_KEY`. Static files are served
-through WhiteNoise, and secure cookies, HTTPS redirect, HSTS, and other Django security
-headers are enabled.
-
-Production-only dependencies are kept out of the local SQLite setup. Install them with:
-
-```bash
-python -m pip install -r requirements-production.txt
-```
-
-`requirements-production.txt` uses Psycopg's binary distribution to avoid compiler and
-PostgreSQL-header requirements. Gunicorn is installed only on POSIX systems because it
-does not support Windows; Windows remains fully supported for local Django development.
-
-```bash
-python manage.py migrate
-python manage.py collectstatic --noinput
-gunicorn config.wsgi:application
-```
+See [PRODUCTION.md](PRODUCTION.md)

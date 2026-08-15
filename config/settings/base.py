@@ -29,6 +29,7 @@ env = environ.Env(
     VOCABULARY_DEFAULT_ITEM_COUNT=(int, 12),
     VOCABULARY_GENERATION_RATE=(str, "5/h"),
     RATELIMIT_ENABLE=(bool, True),
+    SIGNUP_ENABLED=(bool, True),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -74,6 +75,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "accounts.context_processors.account_access",
             ],
         },
     }
@@ -134,6 +136,7 @@ OPENSUBTITLES_TIMEOUT_SECONDS = env("OPENSUBTITLES_TIMEOUT_SECONDS")
 VOCABULARY_DEFAULT_ITEM_COUNT = env("VOCABULARY_DEFAULT_ITEM_COUNT")
 VOCABULARY_GENERATION_RATE = env("VOCABULARY_GENERATION_RATE")
 RATELIMIT_ENABLE = env("RATELIMIT_ENABLE")
+SIGNUP_ENABLED = env("SIGNUP_ENABLED")
 
 LOGGING = {
     "version": 1,
