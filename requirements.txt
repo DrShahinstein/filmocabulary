@@ -1,6 +1,9 @@
 # Cross-platform application dependencies for local SQLite development.
+# Declare every directly imported third-party package here instead of relying
+# on another dependency to install it transitively.
 # Keep transitive compiled packages (for example pydantic-core, cryptography,
 # and cffi) unlisted so pip can select wheels compatible with the host Python.
+charset-normalizer>=3.4,<4
 Django>=5.2,<5.3
 django-environ>=0.14,<1
 django-ratelimit>=4.1,<5
