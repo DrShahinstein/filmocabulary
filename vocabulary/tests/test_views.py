@@ -1,4 +1,5 @@
 import warnings
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
@@ -6,9 +7,11 @@ from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
+from django.utils.html import escape
 
 from movies.models import Movie
 from quizzes.models import UserWordStatus
+from quizzes.services import TARGETED_POOL, targeted_scope_from_token
 from vocabulary.ingestion import SourceDocument
 from vocabulary.models import VocabularyItem
 from vocabulary.querysets import VocabularyFilterSpec
@@ -46,6 +49,48 @@ class VocabularyViewTests(TestCase):
 
     def setUp(self):
         self.client.force_login(self.user)
+
+    def create_quiz_ready_words(
+        self,
+        count,
+        *,
+        prefix="quiz-term",
+        movie=None,
+        has_cloze=True,
+    ):
+        movie = movie or self.movie
+        items = []
+        for index in range(count):
+            word = f"{prefix}-{index}"
+            items.append(
+                VocabularyItem.objects.create(
+                    movie=movie,
+                    word_or_phrase=word,
+                    type=VocabularyItem.Type.VERB,
+                    cefr_level=VocabularyItem.CefrLevel.C1,
+                    definition_en=f"Distinct meaning for {word}.",
+                    example_sentence=f"The speaker used {word} carefully.",
+                    blank_sentence=(
+                        "The speaker used ___ carefully." if has_cloze else None
+                    ),
+                )
+            )
+        return items
+
+    def targeted_scope_from_url(self, url, *, expected_mode):
+        parsed = urlsplit(url)
+        self.assertEqual(
+            parsed.path,
+            reverse("quizzes:question", args=[TARGETED_POOL]),
+        )
+        parameters = parse_qs(parsed.query)
+        self.assertEqual(parameters["mode"], [expected_mode])
+        self.assertEqual(set(parameters), {"mode", "scope"})
+        self.assertEqual(len(parameters["scope"]), 1)
+        return targeted_scope_from_token(
+            user=self.user,
+            token=parameters["scope"][0],
+        )
 
     @patch("vocabulary.views.generate_and_save_vocabulary")
     def test_generation_uses_validated_new_movie_fields(self, generate):
@@ -533,6 +578,151 @@ class VocabularyViewTests(TestCase):
         response = self.client.get(url)
         self.assertRedirects(response, f"{reverse('login')}?next={url}")
 
+    def test_words_explorer_renders_targeted_launch_controls(self):
+        self.create_quiz_ready_words(4)
+
+        response = self.client.get(reverse("words:index"))
+
+        self.assertTrue(response.context["definition_quiz_available"])
+        self.assertTrue(response.context["cloze_quiz_available"])
+        definition_url = response.context["targeted_definition_url"]
+        cloze_url = response.context["targeted_cloze_url"]
+        self.assertContains(response, 'aria-label="Practice matching words"')
+        self.assertContains(response, "Definition Quiz")
+        self.assertContains(response, "Fill-in-the-blanks Quiz")
+        self.assertContains(response, f'href="{escape(definition_url)}"')
+        self.assertContains(response, f'href="{escape(cloze_url)}"')
+        self.assertEqual(
+            self.targeted_scope_from_url(
+                definition_url,
+                expected_mode="definition",
+            ),
+            VocabularyFilterSpec(),
+        )
+        self.assertEqual(
+            self.targeted_scope_from_url(cloze_url, expected_mode="cloze"),
+            VocabularyFilterSpec(),
+        )
+
+    def test_words_explorer_htmx_results_include_targeted_launch_controls(self):
+        self.create_quiz_ready_words(4)
+
+        response = self.client.get(
+            reverse("words:index"),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertTemplateUsed(response, "partials/word_explorer_results.html")
+        self.assertTemplateNotUsed(response, "vocabulary/words_explorer.html")
+        self.assertContains(
+            response,
+            f'href="{escape(response.context["targeted_definition_url"])}"',
+        )
+        self.assertContains(
+            response,
+            f'href="{escape(response.context["targeted_cloze_url"])}"',
+        )
+        self.assertContains(response, "Definition Quiz")
+        self.assertContains(response, "Fill-in-the-blanks Quiz")
+
+    def test_words_explorer_launch_scope_uses_canonical_filters_without_page(self):
+        self.create_quiz_ready_words(4, prefix="canonical-term")
+
+        response = self.client.get(
+            reverse("words:index"),
+            {
+                "q": "  canonical-term  ",
+                "status": "new",
+                "type": VocabularyItem.Type.VERB,
+                "movie": self.movie.pk,
+                "cefr": ["C2", "C1", "C1"],
+                "page": 1,
+                "ignored": "do-not-sign",
+            },
+        )
+
+        expected = VocabularyFilterSpec(
+            q="canonical-term",
+            status="new",
+            word_type=VocabularyItem.Type.VERB,
+            movie_id=self.movie.pk,
+            cefr_levels=("C1", "C2"),
+        )
+        self.assertEqual(response.context["vocabulary_filter_spec"], expected)
+        self.assertEqual(
+            response.context["filter_query"],
+            (
+                "q=canonical-term&status=new&type=verb"
+                f"&movie={self.movie.pk}&cefr=C1&cefr=C2"
+            ),
+        )
+        self.assertEqual(
+            self.targeted_scope_from_url(
+                response.context["targeted_definition_url"],
+                expected_mode="definition",
+            ),
+            expected,
+        )
+        self.assertEqual(
+            self.targeted_scope_from_url(
+                response.context["targeted_cloze_url"],
+                expected_mode="cloze",
+            ),
+            expected,
+        )
+
+    def test_words_explorer_disables_cloze_when_filtered_words_lack_blanks(self):
+        self.create_quiz_ready_words(4, prefix="definition-option")
+        self.create_quiz_ready_words(
+            1,
+            prefix="no-cloze-target",
+            has_cloze=False,
+        )
+
+        response = self.client.get(
+            reverse("words:index"),
+            {"q": "no-cloze-target"},
+        )
+
+        self.assertTrue(response.context["definition_quiz_available"])
+        self.assertFalse(response.context["cloze_quiz_available"])
+        self.assertContains(
+            response,
+            f'href="{escape(response.context["targeted_definition_url"])}"',
+        )
+        self.assertContains(
+            response,
+            'title="None of the matching words has a fill-in-the-blank sentence."',
+        )
+        self.assertNotContains(
+            response,
+            f'href="{escape(response.context["targeted_cloze_url"])}"',
+        )
+
+    def test_other_users_words_do_not_enable_definition_practice(self):
+        other_movie = Movie.objects.create(
+            user=self.other_user,
+            title="Heat",
+            release_year=1995,
+        )
+        self.create_quiz_ready_words(4, movie=other_movie, prefix="outsider-term")
+
+        response = self.client.get(reverse("words:index"))
+
+        self.assertFalse(response.context["definition_quiz_available"])
+        self.assertTrue(response.context["cloze_quiz_available"])
+        self.assertContains(
+            response,
+            'title="Your library needs at least five entries with distinct definitions."',
+        )
+        self.assertEqual(
+            self.targeted_scope_from_url(
+                response.context["targeted_cloze_url"],
+                expected_mode="cloze",
+            ),
+            VocabularyFilterSpec(),
+        )
+
     def test_words_explorer_searches_term_definition_and_context(self):
         phrase = VocabularyItem.objects.create(
             movie=self.movie,
@@ -641,6 +831,12 @@ class VocabularyViewTests(TestCase):
         self.assertEqual(list(response.context["items"]), [])
         self.assertIsNone(response.context["vocabulary_filter_spec"])
         self.assertEqual(response.context["filter_query"], "")
+        self.assertFalse(response.context["definition_quiz_available"])
+        self.assertFalse(response.context["cloze_quiz_available"])
+        self.assertEqual(response.context["targeted_definition_url"], "")
+        self.assertEqual(response.context["targeted_cloze_url"], "")
+        self.assertNotContains(response, "Definition Quiz")
+        self.assertNotContains(response, "Fill-in-the-blanks Quiz")
         self.assertNotContains(response, outsider.word_or_phrase)
 
     def test_words_explorer_exposes_canonical_validated_filter_state(self):
@@ -714,6 +910,14 @@ class VocabularyViewTests(TestCase):
         self.assertEqual(len(response.context["items"]), 24)
         self.assertEqual(response.context["page_obj"].paginator.count, 26)
         self.assertEqual(response.context["filter_query"], "type=verb")
+        self.assertTrue(response.context["cloze_quiz_available"])
+        self.assertEqual(
+            self.targeted_scope_from_url(
+                response.context["targeted_cloze_url"],
+                expected_mode="cloze",
+            ),
+            VocabularyFilterSpec(word_type=VocabularyItem.Type.VERB),
+        )
         self.assertContains(response, "type=verb&amp;page=2")
         self.assertNotContains(response, "ignored=do-not-preserve")
 
