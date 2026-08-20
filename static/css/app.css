@@ -1726,10 +1726,6 @@ textarea::placeholder {
     line-height: 1.55;
 }
 
-.cloze-answer input {
-    font-size: 1.05rem;
-}
-
 .mcq-form {
     display: grid;
     gap: 18px;

@@ -47,24 +47,15 @@
               novalidate>
             {% csrf_token %}
             {{ form.question_token }}
-            {% if question.kind == 'cloze' %}
-                <div class="form-field cloze-answer{% if form.answer.errors %} has-error{% endif %}">
-                    <label for="{{ form.answer.id_for_label }}">{{ form.answer.label }}</label>
-                    {{ form.answer }}
-                    {% if form.answer.help_text %}<p class="help-text">{{ form.answer.help_text }}</p>{% endif %}
-                    {% for error in form.answer.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
+            <fieldset>
+                <legend>{{ form.selected_option.label }}</legend>
+                <div class="mcq-options">
+                    {% for radio in form.selected_option %}
+                        <label class="mcq-option" for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>
+                    {% endfor %}
                 </div>
-            {% else %}
-                <fieldset>
-                    <legend>{{ form.selected_option.label }}</legend>
-                    <div class="mcq-options">
-                        {% for radio in form.selected_option %}
-                            <label class="mcq-option" for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>
-                        {% endfor %}
-                    </div>
-                    {% for error in form.selected_option.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
-                </fieldset>
-            {% endif %}
+                {% for error in form.selected_option.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
+            </fieldset>
             <div class="button-row">
                 <button class="button button--primary" type="submit">Check answer</button>
                 <button class="button button--secondary"

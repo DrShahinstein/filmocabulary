@@ -250,20 +250,6 @@ def _tokens_match(left: str, right: str) -> bool:
     return bool(lemma_candidates(left) & lemma_candidates(right))
 
 
-def terms_are_equivalent(left: str, right: str) -> bool:
-    """Compare terms case-insensitively while accepting clear inflections."""
-    left_tokens = normalise_tokens(left)
-    right_tokens = normalise_tokens(right)
-    return bool(
-        left_tokens
-        and len(left_tokens) == len(right_tokens)
-        and all(
-            _tokens_match(left_token, right_token)
-            for left_token, right_token in zip(left_tokens, right_tokens, strict=True)
-        )
-    )
-
-
 def find_term_matches(source_text: str, term: str) -> tuple[TermMatch, ...]:
     """Return morphological term matches with their original surface spans."""
     target = term.strip()

@@ -225,49 +225,100 @@ class ClozeQuizTests(TestCase):
         self.user = make_user("cloze-learner")
         self.movie = make_movie(self.user)
 
-    def test_cloze_question_does_not_require_five_vocabulary_items(self):
-        item = make_vocabulary(
-            self.movie,
-            word="scrutinize",
-            sentence="The reporter will ___ every detail.",
-        )
+    def test_cloze_question_builds_five_unique_term_options(self):
+        items = [
+            make_vocabulary(
+                self.movie,
+                word=f"cloze-{index}",
+                definition=f"Cloze meaning {index}.",
+                word_type=VocabularyItem.Type.VERB,
+            )
+            for index in range(5)
+        ]
 
-        question = generate_question(user=self.user, mode=CLOZE_MODE)
+        question = generate_question(
+            user=self.user,
+            mode=CLOZE_MODE,
+            target=items[0],
+            rng=random.Random(4),
+        )
         decoded = question_from_token(user=self.user, token=question.token)
 
-        self.assertEqual(question.target, item)
+        self.assertEqual(question.target, items[0])
         self.assertEqual(question.kind, CLOZE_MODE)
-        self.assertEqual(question.options, ())
-        self.assertEqual(decoded.target, item)
-        self.assertEqual(decoded.kind, CLOZE_MODE)
-
-    def test_inflected_cloze_answer_updates_tracked_progress(self):
-        item = VocabularyItem.objects.create(
-            movie=self.movie,
-            word_or_phrase="scrutinize",
-            type=VocabularyItem.Type.VERB,
-            cefr_level=VocabularyItem.CefrLevel.C1,
-            definition_en="Examine something very carefully.",
-            example_sentence="The reporter scrutinized every detail.",
-            blank_sentence="The reporter ___ every detail.",
+        self.assertEqual(len(question.options), 5)
+        self.assertEqual(
+            {option.vocabulary_item_id for option in question.options},
+            {item.pk for item in items},
         )
+        self.assertEqual(len({option.word_or_phrase for option in question.options}), 5)
+        self.assertEqual(decoded.target, items[0])
+        self.assertEqual(decoded.kind, CLOZE_MODE)
+        self.assertEqual(decoded.options, question.options)
+
+    def test_cloze_question_requires_five_distinct_terms(self):
+        make_vocabulary(self.movie, word="only-cloze-choice")
+
+        with self.assertRaisesMessage(QuizUnavailableError, "distinct terms"):
+            generate_question(user=self.user, mode=CLOZE_MODE)
+
+    def test_cloze_distractors_prioritize_the_same_part_of_speech(self):
+        nouns = [
+            make_vocabulary(
+                self.movie,
+                word=f"noun-choice-{index}",
+                definition=f"Noun choice meaning {index}.",
+                word_type=VocabularyItem.Type.NOUN,
+            )
+            for index in range(5)
+        ]
+        for index in range(2):
+            make_vocabulary(
+                self.movie,
+                word=f"verb-choice-{index}",
+                definition=f"Verb choice meaning {index}.",
+                word_type=VocabularyItem.Type.VERB,
+            )
+
+        question = generate_question(
+            user=self.user,
+            mode=CLOZE_MODE,
+            target=nouns[0],
+            rng=random.Random(2),
+        )
+
+        self.assertEqual(
+            {option.vocabulary_item_id for option in question.options},
+            {item.pk for item in nouns},
+        )
+
+    def test_cloze_multiple_choice_updates_tracked_progress(self):
+        items = [
+            make_vocabulary(
+                self.movie,
+                word=f"tracked-cloze-{index}",
+                definition=f"Tracked cloze meaning {index}.",
+            )
+            for index in range(5)
+        ]
         correct_question = generate_question(
             user=self.user,
             mode=CLOZE_MODE,
-            target=item,
+            target=items[0],
         )
 
         correct_result = answer_question(
             user=self.user,
             token=correct_question.token,
-            submitted_answer="  SCRUTINIZED  ",
+            selected_item_id=items[0].pk,
         )
 
-        status = UserWordStatus.objects.get(user=self.user, vocabulary_item=item)
+        status = UserWordStatus.objects.get(
+            user=self.user,
+            vocabulary_item=items[0],
+        )
         self.assertTrue(correct_result.is_correct)
         self.assertTrue(correct_result.updates_progress)
-        self.assertEqual(correct_result.submitted_answer, "SCRUTINIZED")
-        self.assertEqual(correct_result.correct_answer, "scrutinized")
         self.assertEqual(status.status, UserWordStatus.Status.MASTERED)
         self.assertEqual(status.correct_count, 1)
         self.assertEqual(status.wrong_count, 0)
@@ -276,48 +327,27 @@ class ClozeQuizTests(TestCase):
         wrong_question = generate_question(
             user=self.user,
             mode=CLOZE_MODE,
-            target=item,
+            target=items[1],
+        )
+        wrong_id = next(
+            option.vocabulary_item_id
+            for option in wrong_question.options
+            if option.vocabulary_item_id != items[1].pk
         )
         wrong_result = answer_question(
             user=self.user,
             token=wrong_question.token,
-            submitted_answer="reviewed",
+            selected_item_id=wrong_id,
         )
 
-        status.refresh_from_db()
+        wrong_status = UserWordStatus.objects.get(
+            user=self.user,
+            vocabulary_item=items[1],
+        )
         self.assertFalse(wrong_result.is_correct)
-        self.assertEqual(status.status, UserWordStatus.Status.LEARNING)
-        self.assertEqual(status.correct_count, 1)
-        self.assertEqual(status.wrong_count, 1)
-
-    def test_separable_phrasal_verb_accepts_inflected_answer(self):
-        item = VocabularyItem.objects.create(
-            movie=self.movie,
-            word_or_phrase="brush off",
-            type=VocabularyItem.Type.PHRASAL_VERB,
-            cefr_level=VocabularyItem.CefrLevel.C1,
-            definition_en="Dismiss something as unimportant.",
-            example_sentence="She brushed the criticism off immediately.",
-            blank_sentence="She ___ the criticism ___ immediately.",
-        )
-        question = generate_question(
-            user=self.user,
-            mode=CLOZE_MODE,
-            target=item,
-        )
-
-        result = answer_question(
-            user=self.user,
-            token=question.token,
-            submitted_answer="brushed off",
-        )
-
-        self.assertTrue(result.is_correct)
-        self.assertEqual(result.correct_answer, "brushed off")
-        self.assertEqual(
-            UserWordStatus.objects.get(user=self.user, vocabulary_item=item).status,
-            UserWordStatus.Status.MASTERED,
-        )
+        self.assertEqual(wrong_status.status, UserWordStatus.Status.LEARNING)
+        self.assertEqual(wrong_status.correct_count, 0)
+        self.assertEqual(wrong_status.wrong_count, 1)
 
     def test_mixed_mode_selects_both_kinds_and_skip_preserves_mode(self):
         items = [
@@ -472,7 +502,7 @@ class TargetedPracticeTests(TestCase):
         result = answer_question(
             user=self.user,
             token=question.token,
-            submitted_answer="untracked-target",
+            selected_item_id=target.pk,
         )
 
         self.assertEqual(question.target, target)

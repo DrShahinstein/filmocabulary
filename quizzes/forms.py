@@ -59,35 +59,22 @@ class QuizAnswerForm(forms.Form):
 
     def __init__(self, *args, question, **kwargs):
         super().__init__(*args, **kwargs)
+        is_cloze = question.kind == CLOZE_MODE
+        if is_cloze:
+            self.fields["selected_option"].label = "Choose the missing word or phrase"
+
+        def option_text(option):
+            if is_cloze:
+                return option.word_or_phrase.strip()
+            return capfirst(option.definition.strip())
+
         self.fields["selected_option"].choices = [
             (
                 option.vocabulary_item_id,
-                f"{option.label}) {capfirst(option.definition.strip())}",
+                f"{option.label}) {option_text(option)}",
             )
             for option in question.options
         ]
-        self.fields["question_token"].initial = question.token
-
-
-class ClozeAnswerForm(forms.Form):
-    question_token = forms.CharField(widget=forms.HiddenInput)
-    answer = forms.CharField(
-        max_length=255,
-        strip=True,
-        label="Missing word or phrase",
-        help_text="Inflected forms and differences in capitalization are accepted.",
-        widget=forms.TextInput(
-            attrs={
-                "autocomplete": "off",
-                "autocapitalize": "none",
-                "spellcheck": "false",
-                "data-autofocus": "",
-            }
-        ),
-    )
-
-    def __init__(self, *args, question, **kwargs):
-        super().__init__(*args, **kwargs)
         self.fields["question_token"].initial = question.token
 
 

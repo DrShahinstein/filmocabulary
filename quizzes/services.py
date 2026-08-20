@@ -11,7 +11,6 @@ from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from movies.models import Movie
-from vocabulary.matching import find_term_matches, terms_are_equivalent
 from vocabulary.models import VocabularyItem
 from vocabulary.querysets import (
     VocabularyFilterSpec,
@@ -52,6 +51,7 @@ class QuizOption:
     label: str
     vocabulary_item_id: int
     definition: str
+    word_or_phrase: str
 
 
 @dataclass(frozen=True)
@@ -79,9 +79,7 @@ MultipleChoiceQuestion = QuizQuestion
 @dataclass(frozen=True)
 class AnswerResult:
     question: QuizQuestion
-    selected_option: QuizOption | None
-    submitted_answer: str | None
-    correct_answer: str
+    selected_option: QuizOption
     is_correct: bool
     word_status: UserWordStatus | None
 
@@ -166,6 +164,17 @@ def _cloze_eligible(queryset):
     )
 
 
+def _has_five_distinct_values(queryset, field_name):
+    values = (
+        queryset.annotate(_quiz_value=Lower(Trim(field_name)))
+        .exclude(_quiz_value="")
+        .order_by()
+        .values_list("_quiz_value", flat=True)
+        .distinct()[:5]
+    )
+    return len(list(values)) == 5
+
+
 def targeted_practice_availability(*, user, filter_spec):
     """Return definition/cloze availability for a validated Explorer scope."""
     if not isinstance(filter_spec, VocabularyFilterSpec):
@@ -173,15 +182,11 @@ def targeted_practice_availability(*, user, filter_spec):
     targets = filter_vocabulary_queryset(_owned_vocabulary(user), filter_spec)
     if not targets.exists():
         return False, False
-    definition_keys = (
-        _owned_vocabulary(user)
-        .annotate(_definition_key=Lower(Trim("definition_en")))
-        .order_by()
-        .values_list("_definition_key", flat=True)
-        .distinct()[:5]
+    owned = _owned_vocabulary(user)
+    definition_available = _has_five_distinct_values(owned, "definition_en")
+    cloze_available = _cloze_eligible(targets).exists() and (
+        _has_five_distinct_values(owned, "word_or_phrase")
     )
-    definition_available = len(list(definition_keys)) == 5
-    cloze_available = _cloze_eligible(targets).exists()
     return definition_available, cloze_available
 
 
@@ -229,12 +234,13 @@ def _target_queryset(
     return targets.exclude(pk__in=excluded_ids)
 
 
-def _select_distractors(*, user, target, movie_ids, rng):
+def _select_distractors(*, user, target, movie_ids, kind, rng):
+    value_field = "definition_en" if kind == DEFINITION_MODE else "word_or_phrase"
     owned = _owned_vocabulary(user, movie_ids).exclude(pk=target.pk).annotate(
-        _definition_key=Lower(Trim("definition_en"))
-    )
+        _quiz_value=Lower(Trim(value_field))
+    ).exclude(_quiz_value="")
     selected = []
-    used_definitions = {target.definition_en.strip().casefold()}
+    used_values = {getattr(target, value_field).strip().casefold()}
 
     for prefer_same_type in (True, False):
         candidates = owned
@@ -244,25 +250,27 @@ def _select_distractors(*, user, target, movie_ids, rng):
         while len(selected) < 4:
             excluded_ids = [item.pk for item in selected]
             queryset = candidates.exclude(pk__in=excluded_ids).exclude(
-                _definition_key__in=used_definitions
+                _quiz_value__in=used_values
             )
             candidate = _random_row(queryset, rng)
             if candidate is None:
                 break
-            normalized_definition = candidate.definition_en.strip().casefold()
-            if normalized_definition in used_definitions:
+            normalized_value = getattr(candidate, value_field).strip().casefold()
+            if normalized_value in used_values:
                 # Unicode case-folding can still differ from database LOWER().
                 candidates = candidates.exclude(pk=candidate.pk)
                 continue
             selected.append(candidate)
-            used_definitions.add(normalized_definition)
+            used_values.add(normalized_value)
 
         if len(selected) == 4:
             break
 
     if len(selected) < 4:
+        value_label = "definitions" if kind == DEFINITION_MODE else "terms"
         raise QuizUnavailableError(
-            "Add at least five vocabulary entries with distinct definitions to start practice."
+            f"Add at least five vocabulary entries with distinct {value_label} "
+            "to start practice."
         )
     return selected
 
@@ -354,39 +362,48 @@ def generate_question(
         raise QuizUnavailableError(_empty_pool_message(pool=pool, mode=mode))
 
     kind = _question_kind(mode=mode, target=target, rng=rng)
-    option_items = []
-    if kind == DEFINITION_MODE:
-        try:
-            distractors = _select_distractors(
-                user=user,
-                target=target,
-                # Targeted filters govern targets, not incidental distractors.
-                movie_ids=() if pool == TARGETED_POOL else normalized_movie_ids,
-                rng=rng,
-            )
-        except QuizUnavailableError:
-            if mode != MIXED_MODE:
-                raise
-            cloze_targets = _target_queryset(
-                user,
-                pool,
-                mode=CLOZE_MODE,
-                movie_ids=normalized_movie_ids,
-                filter_spec=filter_spec,
-                excluded_ids=excluded_target_ids,
-            )
-            target = _random_row(cloze_targets, rng)
-            if target is None:
-                raise
-            kind = CLOZE_MODE
-        else:
-            option_items = [target, *distractors]
-            rng.shuffle(option_items)
+    option_movie_ids = () if pool == TARGETED_POOL else normalized_movie_ids
+    try:
+        distractors = _select_distractors(
+            user=user,
+            target=target,
+            movie_ids=option_movie_ids,
+            kind=kind,
+            rng=rng,
+        )
+    except QuizUnavailableError:
+        if mode != MIXED_MODE:
+            raise
+        alternative_kind = (
+            CLOZE_MODE if kind == DEFINITION_MODE else DEFINITION_MODE
+        )
+        alternative_targets = _target_queryset(
+            user,
+            pool,
+            mode=alternative_kind,
+            movie_ids=normalized_movie_ids,
+            filter_spec=filter_spec,
+            excluded_ids=excluded_target_ids,
+        )
+        target = _random_row(alternative_targets, rng)
+        if target is None:
+            raise
+        kind = alternative_kind
+        distractors = _select_distractors(
+            user=user,
+            target=target,
+            movie_ids=option_movie_ids,
+            kind=kind,
+            rng=rng,
+        )
+
+    option_items = [target, *distractors]
+    rng.shuffle(option_items)
 
     option_ids = [item.pk for item in option_items]
     token = signing.dumps(
         {
-            "v": 2,
+            "v": 3,
             "target": target.pk,
             "options": option_ids,
             "pool": pool,
@@ -400,7 +417,7 @@ def generate_question(
         compress=True,
     )
     options = tuple(
-        QuizOption(label, item.pk, item.definition_en)
+        QuizOption(label, item.pk, item.definition_en, item.word_or_phrase)
         for label, item in zip(
             OPTION_LABELS[: len(option_items)],
             option_items,
@@ -448,7 +465,7 @@ def question_from_token(*, user, token):
     valid_scalars = (
         isinstance(version, int)
         and not isinstance(version, bool)
-        and version in (1, 2)
+        and version in (1, 2, 3)
         and isinstance(target_id, int)
         and not isinstance(target_id, bool)
         and pool in QUIZ_POOLS
@@ -456,6 +473,10 @@ def question_from_token(*, user, token):
         and kind in QUIZ_KINDS
         and not (mode == DEFINITION_MODE and kind != DEFINITION_MODE)
         and not (mode == CLOZE_MODE and kind != CLOZE_MODE)
+        and not (
+            version == 1
+            and (mode != DEFINITION_MODE or kind != DEFINITION_MODE)
+        )
         and isinstance(option_ids, list)
         and isinstance(movie_ids, list)
         and all(
@@ -465,15 +486,14 @@ def question_from_token(*, user, token):
         and len(set(movie_ids)) == len(movie_ids)
     )
     valid_options = (
-        kind == DEFINITION_MODE
-        and len(option_ids) == 5
+        len(option_ids) == 5
         and all(
             isinstance(value, int) and not isinstance(value, bool)
             for value in option_ids
         )
         and len(set(option_ids)) == 5
         and target_id in option_ids
-    ) or (kind == CLOZE_MODE and option_ids == [])
+    )
     if not valid_scalars or not valid_options:
         raise QuizTokenError("This question is invalid. Load a new one to continue.")
 
@@ -489,7 +509,7 @@ def question_from_token(*, user, token):
 
     valid_scope = (
         pool == TARGETED_POOL
-        and version == 2
+        and version in (2, 3)
         and mode != MIXED_MODE
         and not normalized_movie_ids
         and filter_spec is not None
@@ -497,7 +517,7 @@ def question_from_token(*, user, token):
     if not valid_scope:
         raise QuizTokenError("This question is invalid. Load a new one to continue.")
 
-    requested_ids = option_ids if kind == DEFINITION_MODE else [target_id]
+    requested_ids = option_ids
     item_movie_ids = () if pool == TARGETED_POOL else normalized_movie_ids
     items = {
         item.pk: item
@@ -516,7 +536,12 @@ def question_from_token(*, user, token):
             "This fill-in-the-blank question is no longer available. Load a new one to continue."
         )
     options = tuple(
-        QuizOption(label, item_id, items[item_id].definition_en)
+        QuizOption(
+            label,
+            item_id,
+            items[item_id].definition_en,
+            items[item_id].word_or_phrase,
+        )
         for label, item_id in zip(
             OPTION_LABELS[: len(option_ids)],
             option_ids,
@@ -583,47 +608,25 @@ def toggle_saved_word(*, user, vocabulary_item_id):
     return vocabulary_item, word_status
 
 
-def _surface_cloze_answer(item: VocabularyItem) -> str:
-    matches = find_term_matches(item.example_sentence, item.word_or_phrase)
-    if len(matches) != 1:
-        return item.word_or_phrase
-    return " ".join(
-        item.example_sentence[start:end] for start, end in matches[0].spans
-    )
-
-
 @transaction.atomic
 def answer_question(
     *,
     user,
     token,
     selected_item_id=None,
-    submitted_answer=None,
 ):
     question = question_from_token(user=user, token=token)
-    selected_option = None
-    normalized_submission = None
-    correct_answer = question.target.word_or_phrase
-
-    if question.kind == DEFINITION_MODE:
-        options_by_id = {
-            option.vocabulary_item_id: option for option in question.options
-        }
-        if selected_item_id not in options_by_id:
-            raise QuizTokenError("Choose one of the five answers shown.")
-        selected_option = options_by_id[selected_item_id]
-        is_correct = selected_item_id == question.target.pk
-    else:
-        if not isinstance(submitted_answer, str):
-            raise QuizTokenError("Type the missing word or phrase.")
-        normalized_submission = " ".join(submitted_answer.split())
-        if not normalized_submission or len(normalized_submission) > 255:
-            raise QuizTokenError("Type the missing word or phrase.")
-        surface_answer = _surface_cloze_answer(question.target)
-        correct_answer = surface_answer
-        is_correct = terms_are_equivalent(
-            normalized_submission, question.target.word_or_phrase
-        ) or terms_are_equivalent(normalized_submission, surface_answer)
+    options_by_id = {
+        option.vocabulary_item_id: option for option in question.options
+    }
+    if (
+        not isinstance(selected_item_id, int)
+        or isinstance(selected_item_id, bool)
+        or selected_item_id not in options_by_id
+    ):
+        raise QuizTokenError("Choose one of the five answers shown.")
+    selected_option = options_by_id[selected_item_id]
+    is_correct = selected_item_id == question.target.pk
 
     token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     cache_key = f"quiz-answer:{user.pk}:{token_digest}"
@@ -661,8 +664,6 @@ def answer_question(
     return AnswerResult(
         question=question,
         selected_option=selected_option,
-        submitted_answer=normalized_submission,
-        correct_answer=correct_answer,
         is_correct=is_correct,
         word_status=status,
     )

@@ -11,14 +11,12 @@ from django.views.generic import ListView, TemplateView
 from vocabulary.models import VocabularyItem
 
 from .forms import (
-    ClozeAnswerForm,
     PracticeSetupForm,
     QuizAnswerForm,
     TargetedPracticeLaunchForm,
 )
 from .models import UserWordStatus
 from .services import (
-    CLOZE_MODE,
     DuplicateAnswerError,
     QuizTokenError,
     QuizUnavailableError,
@@ -83,10 +81,9 @@ def _practice_metadata(*, pool, filter_spec=None):
 
 
 def _answer_form(question, data=None):
-    form_class = ClozeAnswerForm if question.kind == CLOZE_MODE else QuizAnswerForm
     if data is None:
-        return form_class(question=question)
-    return form_class(data, question=question)
+        return QuizAnswerForm(question=question)
+    return QuizAnswerForm(data, question=question)
 
 
 def _question_context(
@@ -391,18 +388,12 @@ class QuizAnswerView(LoginRequiredMixin, View):
                 status=422,
             )
 
-        answer_arguments = {
-            "user": request.user,
-            "token": form.cleaned_data["question_token"],
-        }
-        if question.kind == CLOZE_MODE:
-            answer_arguments["submitted_answer"] = form.cleaned_data["answer"]
-        else:
-            answer_arguments["selected_item_id"] = form.cleaned_data[
-                "selected_option"
-            ]
         try:
-            result = answer_question(**answer_arguments)
+            result = answer_question(
+                user=request.user,
+                token=form.cleaned_data["question_token"],
+                selected_item_id=form.cleaned_data["selected_option"],
+            )
         except (QuizTokenError, DuplicateAnswerError) as exc:
             return render(
                 request,

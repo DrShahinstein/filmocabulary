@@ -18,7 +18,7 @@
     </div>
     {% if not result.is_correct %}
         <p class="quiz-feedback__submitted">
-            {% if result.question.kind == 'cloze' %}You entered: {{ result.submitted_answer }}{% else %}You chose: {{ result.selected_option.definition }}{% endif %}
+            You chose: {% if result.question.kind == 'cloze' %}{{ result.selected_option.word_or_phrase }}{% else %}{{ result.selected_option.definition }}{% endif %}
         </p>
     {% endif %}
     <p class="mcq-context">{{ result.question.target.example_sentence }}</p>

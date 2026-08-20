@@ -692,14 +692,17 @@ class VocabularyViewTests(TestCase):
         )
         self.assertContains(
             response,
-            'title="None of the matching words has a fill-in-the-blank sentence."',
+            (
+                'title="Cloze practice needs a matching blank sentence and five '
+                'distinct terms in your library."'
+            ),
         )
         self.assertNotContains(
             response,
             f'href="{escape(response.context["targeted_cloze_url"])}"',
         )
 
-    def test_other_users_words_do_not_enable_definition_practice(self):
+    def test_other_users_words_do_not_enable_quiz_options(self):
         other_movie = Movie.objects.create(
             user=self.other_user,
             title="Heat",
@@ -710,17 +713,17 @@ class VocabularyViewTests(TestCase):
         response = self.client.get(reverse("words:index"))
 
         self.assertFalse(response.context["definition_quiz_available"])
-        self.assertTrue(response.context["cloze_quiz_available"])
+        self.assertFalse(response.context["cloze_quiz_available"])
         self.assertContains(
             response,
             'title="Your library needs at least five entries with distinct definitions."',
         )
-        self.assertEqual(
-            self.targeted_scope_from_url(
-                response.context["targeted_cloze_url"],
-                expected_mode="cloze",
+        self.assertContains(
+            response,
+            (
+                'title="Cloze practice needs a matching blank sentence and five '
+                'distinct terms in your library."'
             ),
-            VocabularyFilterSpec(),
         )
 
     def test_words_explorer_searches_term_definition_and_context(self):

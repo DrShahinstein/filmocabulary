@@ -2,7 +2,7 @@ from dataclasses import replace
 
 from django.test import TestCase
 
-from quizzes.forms import ClozeAnswerForm, PracticeSetupForm, QuizAnswerForm
+from quizzes.forms import PracticeSetupForm, QuizAnswerForm
 from quizzes.services import (
     CLOZE_MODE,
     DEFINITION_MODE,
@@ -84,31 +84,49 @@ class QuizAnswerFormTests(TestCase):
         self.assertIn("selected_option", form.errors)
 
 
-class ClozeAnswerFormTests(TestCase):
+class ClozeQuizAnswerFormTests(TestCase):
     def setUp(self):
         self.user = make_user("cloze-form-learner")
         movie = make_movie(self.user)
-        self.item = make_vocabulary(movie, word="scrutinize")
+        self.items = [
+            make_vocabulary(
+                movie,
+                word=f"cloze-form-{index}",
+                definition=f"Cloze form meaning {index}.",
+            )
+            for index in range(5)
+        ]
         self.question = generate_question(
             user=self.user,
             mode=CLOZE_MODE,
-            target=self.item,
+            target=self.items[0],
         )
 
-    def test_form_uses_the_signed_question_token(self):
-        form = ClozeAnswerForm(question=self.question)
+    def test_form_uses_term_options_from_the_signed_question(self):
+        form = QuizAnswerForm(question=self.question)
 
         self.assertEqual(form.fields["question_token"].initial, self.question.token)
-        self.assertEqual(form.fields["answer"].label, "Missing word or phrase")
+        self.assertEqual(
+            form.fields["selected_option"].label,
+            "Choose the missing word or phrase",
+        )
+        self.assertEqual(
+            {choice[0] for choice in form.fields["selected_option"].choices},
+            {item.pk for item in self.items},
+        )
+        labels = " ".join(
+            choice[1] for choice in form.fields["selected_option"].choices
+        )
+        for item in self.items:
+            self.assertIn(item.word_or_phrase, labels)
 
-    def test_form_rejects_a_blank_answer(self):
-        form = ClozeAnswerForm(
+    def test_form_rejects_a_missing_selection(self):
+        form = QuizAnswerForm(
             {
                 "question_token": self.question.token,
-                "answer": "   ",
             },
             question=self.question,
         )
 
         self.assertFalse(form.is_valid())
-        self.assertIn("answer", form.errors)
+        self.assertIn("selected_option", form.errors)

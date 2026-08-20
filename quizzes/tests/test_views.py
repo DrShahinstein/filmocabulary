@@ -135,7 +135,7 @@ class QuizViewTests(TestCase):
         self.assertContains(response, 'type="radio"', count=5)
         self.assertNotContains(response, self.outsider.definition_en)
 
-    def test_cloze_question_shows_blank_prompt_without_revealing_answer(self):
+    def test_cloze_question_shows_blank_prompt_with_five_term_options(self):
         response = self.client.get(
             reverse("quizzes:question", args=["collection"]),
             {"mode": CLOZE_MODE},
@@ -145,10 +145,12 @@ class QuizViewTests(TestCase):
         question = response.context["question"]
         self.assertEqual(question.kind, CLOZE_MODE)
         self.assertContains(response, question.target.blank_sentence)
-        self.assertContains(response, 'name="answer"')
-        self.assertNotContains(response, question.target.word_or_phrase)
+        self.assertContains(response, 'name="selected_option"', count=5)
+        self.assertContains(response, question.target.word_or_phrase)
         self.assertNotContains(response, question.target.definition_en)
-        self.assertNotContains(response, 'name="selected_option"')
+        for option in question.options:
+            self.assertContains(response, option.word_or_phrase)
+            self.assertNotContains(response, option.definition)
 
     def test_htmx_question_returns_only_question_partial(self):
         response = self.client.get(
@@ -241,7 +243,7 @@ class QuizViewTests(TestCase):
             UserWordStatus.Status.MASTERED,
         )
 
-    def test_blank_cloze_answer_returns_validation_feedback_without_progress(self):
+    def test_missing_cloze_selection_returns_validation_feedback_without_progress(self):
         question = generate_question(
             user=self.user,
             mode=CLOZE_MODE,
@@ -252,7 +254,6 @@ class QuizViewTests(TestCase):
             reverse("quizzes:answer", args=["collection"]),
             {
                 "question_token": question.token,
-                "answer": "   ",
             },
             HTTP_HX_REQUEST="true",
         )
@@ -274,7 +275,7 @@ class QuizViewTests(TestCase):
             reverse("quizzes:answer", args=["collection"]),
             {
                 "question_token": question.token,
-                "answer": question.target.word_or_phrase,
+                "selected_option": question.target.pk,
             },
             HTTP_HX_REQUEST="true",
         )
@@ -289,6 +290,31 @@ class QuizViewTests(TestCase):
         self.assertEqual(status.status, UserWordStatus.Status.MASTERED)
         self.assertEqual(status.correct_count, 1)
         self.assertEqual(status.wrong_count, 0)
+
+    def test_wrong_cloze_selection_shows_the_chosen_term(self):
+        question = generate_question(
+            user=self.user,
+            mode=CLOZE_MODE,
+            target=self.items[0],
+        )
+        wrong_option = next(
+            option
+            for option in question.options
+            if option.vocabulary_item_id != question.target.pk
+        )
+
+        response = self.client.post(
+            reverse("quizzes:answer", args=["collection"]),
+            {
+                "question_token": question.token,
+                "selected_option": wrong_option.vocabulary_item_id,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Added to Learning Pool")
+        self.assertContains(response, f"You chose: {wrong_option.word_or_phrase}")
 
     def test_wrong_post_updates_learning_pool_and_returns_feedback(self):
         question = generate_question(user=self.user, target=self.items[0])
@@ -367,7 +393,7 @@ class QuizViewTests(TestCase):
             reverse("quizzes:answer", args=[TARGETED_POOL]),
             {
                 "question_token": skipped_question.token,
-                "answer": skipped_question.target.word_or_phrase,
+                "selected_option": skipped_question.target.pk,
             },
             HTTP_HX_REQUEST="true",
         )
