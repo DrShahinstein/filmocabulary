@@ -95,6 +95,10 @@ Navigate to `/admin/` with it while server is running. This way you can manage r
 
 Or just set `SIGNUP_ENABLED=True` in your `.env`.
 
+If a user forgets their password, reset it with
+`scripts/home manage changepassword USERNAME` on Linux or macOS, or
+`scripts\home.ps1 manage changepassword USERNAME` on Windows.
+
 ## Backups
 
 Create a consistent SQLite snapshot while the server is running:
