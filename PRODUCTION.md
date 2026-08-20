@@ -1,8 +1,8 @@
 # Home Production
 
 Filmocabulary's production profile is designed for one household or a small trusted group.
-It runs on Linux or macOS with SQLite, a single-process threaded Gunicorn server, WhiteNoise static
-files, and the existing installation-wide `LLM_*` configuration. It does not require
+It runs on Linux, macOS, or Windows with SQLite, a single-process async Uvicorn server, WhiteNoise
+static files, and the existing installation-wide `LLM_*` configuration. It does not require
 PostgreSQL, Redis, Docker, a public domain, or a public Internet deployment.
 
 Production differs from Django's development server in important ways: debug pages are
@@ -45,7 +45,7 @@ scripts/home start
 ```
 
 Open <http://127.0.0.1:8000/>. `scripts/home start` safely repeats migrations, static-file
-collection, and Django's configuration check before starting Gunicorn.
+collection, and Django's configuration check before starting Uvicorn.
 
 ### Trusted LAN access
 
@@ -108,6 +108,8 @@ scripts/home backup [destination]  Create a consistent SQLite backup
 scripts/home manage <command>      Run any Django management command in Home mode
 ```
 
-Gunicorn is POSIX-only, so Windows remains supported for Django development but is not a
-Home production host. The application can still be opened from Windows phones, tablets,
-and computers on the network.
+Home production runs on Windows, macOS, and Linux. Uvicorn is a pure-Python ASGI server,
+so the same Home server starts on every platform without a POSIX-only dependency. The
+`scripts/home` wrapper is a POSIX shell script; on Windows use Git Bash, WSL, or run the
+equivalent commands directly: `manage.py migrate`, `manage.py collectstatic`,
+`manage.py check`, then `python -m config.uvicorn`.

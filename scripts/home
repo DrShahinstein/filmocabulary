@@ -3,7 +3,6 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="$PROJECT_DIR/.venv/bin/python"
-GUNICORN="$PROJECT_DIR/.venv/bin/gunicorn"
 
 cd "$PROJECT_DIR"
 umask 077
@@ -23,12 +22,12 @@ prepare() {
 command="${1:-start}"
 case "$command" in
     start)
-        if [[ ! -x "$GUNICORN" ]]; then
-            echo "Gunicorn is missing. Install requirements-production.txt in .venv." >&2
+        if ! "$PYTHON" -c "import uvicorn" >/dev/null 2>&1; then
+            echo "Uvicorn is missing. Install requirements-production.txt in .venv." >&2
             exit 1
         fi
         prepare
-        exec "$GUNICORN" --config config/gunicorn.py config.wsgi:application
+        exec "$PYTHON" -m config.uvicorn
         ;;
     prepare)
         prepare

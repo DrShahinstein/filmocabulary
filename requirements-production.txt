@@ -1,6 +1,6 @@
 # Install this manifest in addition to the cross-platform application stack.
 -r requirements.txt
 
-# The Home production server. Gunicorn is POSIX-only; Windows remains supported
-# for local development through Django's development server.
-gunicorn>=23,<24; platform_system != "Windows"
+# The Home production server. Uvicorn serves the ASGI application and runs on
+# every platform, including Windows.
+uvicorn>=0.30,<1

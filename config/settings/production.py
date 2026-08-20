@@ -17,8 +17,8 @@ if len(SECRET_KEY) < 50 or SECRET_KEY == "replace-with-a-long-random-secret":  #
 
 # SQLite is the canonical Home database. WAL permits readers while a write is in
 # progress, and IMMEDIATE transactions wait at their boundary instead of failing
-# later with a locked-database error. One threaded Gunicorn worker complements
-# these settings; see config/gunicorn.py.
+# later with a locked-database error. A single Uvicorn worker complements these
+# settings; see config/uvicorn.py.
 DATABASES = {  # noqa: F405
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
