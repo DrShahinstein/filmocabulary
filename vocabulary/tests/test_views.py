@@ -132,6 +132,32 @@ class VocabularyViewTests(TestCase):
         self.assertNotContains(response, "provider returned fewer candidates")
 
     @patch("vocabulary.views.generate_and_save_vocabulary")
+    def test_generation_reports_malformed_candidates_as_shortfall_reason(
+        self, generate
+    ):
+        generate.return_value = VocabularyGenerationResult(
+            movie=self.movie,
+            created_count=77,
+            skipped_count=0,
+            movie_created=False,
+            requested_count=80,
+            provider_returned_count=80,
+            validated_candidate_count=77,
+            candidate_rejections=CandidateRejections(malformed=3),
+        )
+
+        response = self.client.post(
+            reverse("vocabulary:generate"),
+            {"title": "Zodiac", "release_year": 2007, "item_count": 80},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertContains(
+            response,
+            "3 generated candidates had invalid structured data and were excluded.",
+        )
+
+    @patch("vocabulary.views.generate_and_save_vocabulary")
     def test_generation_attributes_shortfall_to_already_saved_entries(
         self, generate
     ):
@@ -143,7 +169,6 @@ class VocabularyViewTests(TestCase):
             requested_count=80,
             provider_returned_count=95,
             validated_candidate_count=80,
-            candidate_rejections=CandidateRejections(invalid_example=15),
         )
 
         response = self.client.post(

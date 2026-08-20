@@ -30,6 +30,11 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
 
         self.assertEqual(response.items[0].cefr_level.value, "B1")
 
+    def test_accepts_an_item_without_optional_cloze_data(self):
+        response = VocabularyExtractionResponse.model_validate(vocabulary_payload())
+
+        self.assertIsNone(response.items[0].blank_sentence)
+
     def test_accepts_one_hundred_vocabulary_items(self):
         response = VocabularyExtractionResponse.model_validate(
             vocabulary_payload(item_count=100, include_blank=True)
@@ -121,9 +126,10 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
             "Any arbitrary adjacent words or literal descriptions",
             SYSTEM_PROMPT,
         )
-        self.assertIn("MUST appear verbatim in the source text", SYSTEM_PROMPT)
+        self.assertIn("canonical form", SYSTEM_PROMPT)
+        self.assertIn("appears exactly or as a clear inflection", SYSTEM_PROMPT)
         self.assertIn("NEVER invent, paraphrase", SYSTEM_PROMPT)
-        self.assertIn("use the base/lemma form", SYSTEM_PROMPT)
+        self.assertIn("exactly one natural exact or inflected use", SYSTEM_PROMPT)
         self.assertIn("zero plot spoilers", SYSTEM_PROMPT)
         self.assertIn("Strict JSON output matching the required schema", SYSTEM_PROMPT)
 

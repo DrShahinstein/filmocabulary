@@ -90,6 +90,12 @@ adds `ceil(N × 20%)` candidates, bounded between 3 and 15, then validates and
 source-checks the response and saves the first `N` usable results. If fewer candidates pass
 validation, the valid subset is saved without a second LLM request.
 
+Malformed candidates are validated independently, so one bad item does not discard valid
+siblings. Cloze blanks are derived when an example contains one exact or inflected use of
+the term, but cloze eligibility is optional and never prevents a grounded item from being
+used in the definition-based quiz. Candidate-yield logs separate schema, grounding,
+duplicate, and cloze-ineligibility diagnostics without recording generated content.
+
 ### Token Strategy
 
 The largest avoidable input cost is normally the full subtitle file. Filmocabulary reduces

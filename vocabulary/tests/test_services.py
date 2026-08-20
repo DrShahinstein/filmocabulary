@@ -435,9 +435,33 @@ class VocabularyGenerationServiceTests(TestCase):
 
         self.assertFalse(VocabularyItem.objects.exists())
 
-    def test_surplus_absorbs_rejections_without_requesting_a_refill(self):
+    def test_salvages_valid_siblings_and_classifies_malformed_candidate(self):
+        payload = vocabulary_payload(item_count=2)
+        payload["items"][1]["type"] = "invented_type"
+        client = self.llm_client_with_payload(payload)
+
+        result = generate_and_save_vocabulary(
+            user=self.user,
+            title="Zodiac",
+            release_year=2007,
+            item_count=2,
+            client=client,
+        )
+
+        self.assertEqual(result.created_count, 1)
+        self.assertEqual(result.provider_returned_count, 2)
+        self.assertEqual(result.candidate_rejections.malformed, 1)
+        self.assertEqual(result.schema_rejections.invalid_type, 1)
+        self.assertEqual(
+            result.yield_reasons,
+            (VocabularyYieldReason.INVALID_SCHEMA,),
+        )
+        self.assertEqual(VocabularyItem.objects.count(), 1)
+        client.chat.completions.create.assert_called_once()
+
+    def test_inflected_example_is_cloze_eligible_without_a_refill(self):
         payload = vocabulary_payload(item_count=5)
-        payload["items"][1]["example_sentence"] = (
+        payload["items"][0]["example_sentence"] = (
             "The reporter scrutinized every small detail."
         )
         client = self.llm_client_with_payload(payload)
@@ -451,9 +475,14 @@ class VocabularyGenerationServiceTests(TestCase):
         )
 
         self.assertEqual(result.created_count, 2)
+        inflected = VocabularyItem.objects.get(word_or_phrase="scrutinize")
+        self.assertEqual(
+            inflected.blank_sentence,
+            "The reporter ___ every small detail.",
+        )
         client.chat.completions.create.assert_called_once()
 
-    def test_single_shot_saves_valid_shortfall_without_refill(self):
+    def test_single_shot_saves_cloze_ineligible_candidates_without_refill(self):
         payload = vocabulary_payload(item_count=51)
         payload["items"][-1]["example_sentence"] = (
             "The reporter reviewed every small detail."
@@ -469,29 +498,30 @@ class VocabularyGenerationServiceTests(TestCase):
                 client=client,
             )
 
-        self.assertEqual(result.created_count, 50)
+        self.assertEqual(result.created_count, 51)
         self.assertEqual(result.requested_count, 80)
         self.assertEqual(result.provider_returned_count, 51)
-        self.assertEqual(result.validated_candidate_count, 50)
-        self.assertEqual(result.candidate_rejections.invalid_example, 1)
+        self.assertEqual(result.validated_candidate_count, 51)
+        self.assertEqual(result.candidate_rejections.total, 0)
+        self.assertEqual(result.cloze_ineligibility.missing_target, 1)
         self.assertEqual(
             result.yield_reasons,
-            (
-                VocabularyYieldReason.PROVIDER_SHORTFALL,
-                VocabularyYieldReason.INVALID_EXAMPLE,
-            ),
+            (VocabularyYieldReason.PROVIDER_SHORTFALL,),
         )
-        self.assertEqual(VocabularyItem.objects.count(), 50)
+        self.assertEqual(VocabularyItem.objects.count(), 51)
+        self.assertIsNone(
+            VocabularyItem.objects.get(word_or_phrase="scrutinize-51").blank_sentence
+        )
         client.chat.completions.create.assert_called_once()
         yield_log = "\n".join(logs.output)
         self.assertIn("initial_returned=51", yield_log)
         self.assertIn("candidate_limit=95", yield_log)
-        self.assertIn("initial_accepted=50", yield_log)
-        self.assertIn("initial_rejected=1", yield_log)
-        self.assertIn("final_accepted=50", yield_log)
+        self.assertIn("initial_accepted=51", yield_log)
+        self.assertIn("initial_rejected=0", yield_log)
+        self.assertIn("final_accepted=51", yield_log)
         self.assertNotIn("refill", yield_log)
         self.assertIn(
-            "rejection_reasons=duplicate:0,ungrounded:0,invalid_example:1",
+            "cloze_reasons=missing:1,ambiguous:0",
             yield_log,
         )
 
@@ -510,31 +540,32 @@ class VocabularyGenerationServiceTests(TestCase):
             client=client,
         )
 
-        self.assertEqual(result.created_count, 2)
+        self.assertEqual(result.created_count, 3)
+        self.assertEqual(result.cloze_ineligibility.missing_target, 1)
         client.chat.completions.create.assert_called_once()
         schema = client.chat.completions.create.call_args.kwargs[
             "response_format"
         ]["json_schema"]["schema"]["properties"]["items"]
         self.assertEqual((schema["minItems"], schema["maxItems"]), (1, 8))
 
-    def test_all_semantically_invalid_candidates_write_nothing(self):
+    def test_candidate_without_cloze_sentence_is_still_saved(self):
         payload = vocabulary_payload()
         payload["items"][0]["example_sentence"] = (
-            "The reporter scrutinized every small detail."
+            "The reporter reviewed every small detail."
         )
         client = self.llm_client_with_payload(payload)
 
-        with self.assertRaises(VocabularyResponseError):
-            generate_and_save_vocabulary(
-                user=self.user,
-                title="Zodiac",
-                release_year=2007,
-                item_count=1,
-                client=client,
-            )
+        result = generate_and_save_vocabulary(
+            user=self.user,
+            title="Zodiac",
+            release_year=2007,
+            item_count=1,
+            client=client,
+        )
 
-        self.assertFalse(Movie.objects.exists())
-        self.assertFalse(VocabularyItem.objects.exists())
+        self.assertEqual(result.created_count, 1)
+        self.assertEqual(result.cloze_ineligibility.missing_target, 1)
+        self.assertIsNone(VocabularyItem.objects.get().blank_sentence)
 
     def test_rejects_term_that_is_only_a_source_substring(self):
         client = self.llm_client_with_payload(vocabulary_payload())

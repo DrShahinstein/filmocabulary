@@ -22,15 +22,18 @@ from .matching import source_contains_term
 from .models import VocabularyItem
 from .providers import (
     SYSTEM_PROMPT,
+    CandidateSchemaRejections,
     ProviderConfigurationError,
     ProviderRequestError,
     ProviderResponseError,
     VocabularyLLMClient,
+    VocabularyProviderResult,
     build_vocabulary_llm_client,
 )
 from .schemas import (
     VocabularyExtractionCandidate,
     VocabularyExtractionResponse,
+    VocabularyItemCandidate,
     VocabularyItemResponse,
 )
 from .source_acquisition import SourceAcquisitionError, acquire_automatic_source
@@ -47,7 +50,12 @@ from .subtitle_filter import (
     filter_subtitle_document,
     subtitle_filter_budget,
 )
-from .text import BlankSentenceError, derive_blank_sentence, validate_blank_sentence
+from .text import (
+    BlankSentenceError,
+    BlankSentenceErrorReason,
+    derive_blank_sentence,
+    validate_blank_sentence,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -86,18 +94,39 @@ class PreparedVocabularySource:
 class CandidateRejections:
     duplicate: int = 0
     ungrounded: int = 0
-    invalid_example: int = 0
+    malformed: int = 0
 
     @property
     def total(self) -> int:
-        return self.duplicate + self.ungrounded + self.invalid_example
+        return self.duplicate + self.ungrounded + self.malformed
+
+
+@dataclass(frozen=True, slots=True)
+class ClozeIneligibility:
+    missing_target: int = 0
+    ambiguous_target: int = 0
+    preexisting_blank: int = 0
+    missing_text: int = 0
+    other: int = 0
+
+    @property
+    def total(self) -> int:
+        return sum(
+            (
+                self.missing_target,
+                self.ambiguous_target,
+                self.preexisting_blank,
+                self.missing_text,
+                self.other,
+            )
+        )
 
 
 class VocabularyYieldReason(StrEnum):
     PROVIDER_SHORTFALL = "provider_shortfall"
     GENERATED_DUPLICATE = "generated_duplicate"
     UNGROUNDED = "ungrounded"
-    INVALID_EXAMPLE = "invalid_example"
+    INVALID_SCHEMA = "invalid_schema"
     ALREADY_SAVED = "already_saved"
     OTHER = "other"
 
@@ -107,6 +136,16 @@ class CandidateYield:
     provider_returned_count: int
     validated_candidate_count: int
     rejections: CandidateRejections
+    schema_rejections: CandidateSchemaRejections
+    cloze_ineligibility: ClozeIneligibility
+
+
+@dataclass(frozen=True, slots=True)
+class _RequestedCandidates:
+    movie_title: str
+    items: tuple[VocabularyItemCandidate, ...]
+    returned_count: int
+    schema_rejections: CandidateSchemaRejections
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +159,12 @@ class VocabularyGenerationResult:
     validated_candidate_count: int | None = None
     candidate_rejections: CandidateRejections = field(
         default_factory=CandidateRejections
+    )
+    schema_rejections: CandidateSchemaRejections = field(
+        default_factory=CandidateSchemaRejections
+    )
+    cloze_ineligibility: ClozeIneligibility = field(
+        default_factory=ClozeIneligibility
     )
 
     @property
@@ -149,8 +194,8 @@ class VocabularyGenerationResult:
                 reasons.append(VocabularyYieldReason.GENERATED_DUPLICATE)
             if self.candidate_rejections.ungrounded:
                 reasons.append(VocabularyYieldReason.UNGROUNDED)
-            if self.candidate_rejections.invalid_example:
-                reasons.append(VocabularyYieldReason.INVALID_EXAMPLE)
+            if self.candidate_rejections.malformed:
+                reasons.append(VocabularyYieldReason.INVALID_SCHEMA)
         if self.skipped_count:
             reasons.append(VocabularyYieldReason.ALREADY_SAVED)
         if not reasons:
@@ -378,7 +423,7 @@ def _request_candidates(
     candidate_limit: int,
     provider: VocabularyLLMClient,
     source: SourceDocument | None,
-) -> VocabularyExtractionCandidate:
+) -> _RequestedCandidates:
     movie_label = movie.title
     if movie.release_year is not None:
         movie_label = f"{movie.title} ({movie.release_year})"
@@ -406,53 +451,74 @@ def _request_candidates(
             "The vocabulary request could not be completed. Please try a different movie."
         )
 
-    try:
-        if hasattr(parsed, "model_dump"):
-            parsed = parsed.model_dump(mode="json", by_alias=True)
-        parsed = VocabularyExtractionCandidate.model_validate(parsed)
-    except PydanticValidationError as exc:
-        logger.warning(
-            "%s returned invalid parsed vocabulary data",
-            provider.name,
-            exc_info=True,
+    if isinstance(parsed, VocabularyProviderResult):
+        requested = _RequestedCandidates(
+            movie_title=parsed.movie_title,
+            items=parsed.items,
+            returned_count=parsed.returned_count,
+            schema_rejections=parsed.schema_rejections,
         )
-        raise VocabularyResponseError(
-            "The generated vocabulary could not be validated. Please try again."
-        ) from exc
+    else:
+        try:
+            if hasattr(parsed, "model_dump"):
+                parsed = parsed.model_dump(mode="json", by_alias=True)
+            validated = VocabularyExtractionCandidate.model_validate(parsed)
+        except PydanticValidationError as exc:
+            logger.warning(
+                "%s returned invalid parsed vocabulary data",
+                provider.name,
+                exc_info=True,
+            )
+            raise VocabularyResponseError(
+                "The generated vocabulary could not be validated. Please try again."
+            ) from exc
+        requested = _RequestedCandidates(
+            movie_title=validated.movie_title,
+            items=tuple(validated.items),
+            returned_count=len(validated.items),
+            schema_rejections=CandidateSchemaRejections(),
+        )
 
-    if _normalise_title(parsed.movie_title) != _normalise_title(movie.title):
+    if _normalise_title(requested.movie_title) != _normalise_title(movie.title):
         raise VocabularyResponseError(
             "The generated vocabulary did not match the selected movie. Please try again."
         )
-    if len(parsed.items) > candidate_limit:
+    if len(requested.items) > candidate_limit:
         logger.warning(
             "%s returned %d candidates above the request budget; extras were trimmed",
             provider.name,
-            len(parsed.items) - candidate_limit,
+            len(requested.items) - candidate_limit,
         )
-        parsed = VocabularyExtractionCandidate.model_validate(
-            {
-                "movie_title": parsed.movie_title,
-                "items": [
-                    item.model_dump(mode="json", by_alias=True)
-                    for item in parsed.items[:candidate_limit]
-                ],
-            }
+        requested = _RequestedCandidates(
+            movie_title=requested.movie_title,
+            items=requested.items[:candidate_limit],
+            returned_count=requested.returned_count,
+            schema_rejections=requested.schema_rejections,
         )
 
-    return parsed
+    return requested
 
 
 def _accept_candidates(
-    payload: VocabularyExtractionCandidate,
+    payload: _RequestedCandidates,
     *,
     source: SourceDocument | None,
     seen_terms: set[str],
-) -> tuple[list[VocabularyItemResponse], CandidateRejections]:
+) -> tuple[
+    list[VocabularyItemResponse],
+    CandidateRejections,
+    ClozeIneligibility,
+]:
     accepted: list[VocabularyItemResponse] = []
     duplicate_count = 0
     ungrounded_count = 0
-    invalid_example_count = 0
+    cloze_counts = {
+        "missing_target": 0,
+        "ambiguous_target": 0,
+        "preexisting_blank": 0,
+        "missing_text": 0,
+        "other": 0,
+    }
 
     for candidate in payload.items:
         term_key = _normalise_title(candidate.word_or_phrase)
@@ -465,29 +531,36 @@ def _accept_candidates(
             ungrounded_count += 1
             continue
 
+        blank_sentence = None
         try:
             blank_sentence = derive_blank_sentence(
                 candidate.word_or_phrase,
                 candidate.example_sentence,
             )
-            item_data = candidate.model_dump(
-                mode="json",
-                by_alias=True,
-                exclude={"blank_sentence"},
-            )
-            item_data["blank_sentence"] = blank_sentence
-            item = VocabularyItemResponse.model_validate(item_data)
-        except (BlankSentenceError, PydanticValidationError):
-            invalid_example_count += 1
-            continue
+        except BlankSentenceError as exc:
+            cloze_category = {
+                BlankSentenceErrorReason.MISSING_TARGET: "missing_target",
+                BlankSentenceErrorReason.AMBIGUOUS_TARGET: "ambiguous_target",
+                BlankSentenceErrorReason.PREEXISTING_BLANK: "preexisting_blank",
+                BlankSentenceErrorReason.MISSING_TEXT: "missing_text",
+            }.get(exc.reason, "other")
+            cloze_counts[cloze_category] += 1
+
+        item_data = candidate.model_dump(mode="json", by_alias=True)
+        item_data["blank_sentence"] = blank_sentence
+        item = VocabularyItemResponse.model_validate(item_data)
 
         accepted.append(item)
         seen_terms.add(term_key)
 
-    return accepted, CandidateRejections(
-        duplicate=duplicate_count,
-        ungrounded=ungrounded_count,
-        invalid_example=invalid_example_count,
+    return (
+        accepted,
+        CandidateRejections(
+            duplicate=duplicate_count,
+            ungrounded=ungrounded_count,
+            malformed=payload.schema_rejections.total,
+        ),
+        ClozeIneligibility(**cloze_counts),
     )
 
 
@@ -517,12 +590,12 @@ def _request_payload(
         source=source,
     )
     seen_terms: set[str] = set()
-    accepted, initial_rejections = _accept_candidates(
+    accepted, initial_rejections, cloze_ineligibility = _accept_candidates(
         first_payload,
         source=source,
         seen_terms=seen_terms,
     )
-    initial_returned = len(first_payload.items)
+    initial_returned = first_payload.returned_count
     initial_accepted = len(accepted)
     initial_rejected = initial_rejections.total
 
@@ -537,7 +610,11 @@ def _request_payload(
         "Vocabulary candidate yield: provider=%s requested_items=%d "
         "candidate_limit=%d initial_returned=%d initial_accepted=%d "
         "initial_rejected=%d final_accepted=%d "
-        "rejection_reasons=duplicate:%d,ungrounded:%d,invalid_example:%d",
+        "rejection_reasons=duplicate:%d,ungrounded:%d,malformed:%d "
+        "schema_reasons=term:%d,type:%d,cefr:%d,definition:%d,example:%d,"
+        "extra:%d,other:%d cloze_ineligible=%d "
+        "cloze_reasons=missing:%d,ambiguous:%d,preexisting_blank:%d,"
+        "missing_text:%d,other:%d",
         provider.name,
         item_count,
         candidate_limit,
@@ -547,7 +624,20 @@ def _request_payload(
         min(len(accepted), item_count),
         initial_rejections.duplicate,
         initial_rejections.ungrounded,
-        initial_rejections.invalid_example,
+        initial_rejections.malformed,
+        first_payload.schema_rejections.invalid_term,
+        first_payload.schema_rejections.invalid_type,
+        first_payload.schema_rejections.invalid_cefr,
+        first_payload.schema_rejections.invalid_definition,
+        first_payload.schema_rejections.invalid_example,
+        first_payload.schema_rejections.extra_fields,
+        first_payload.schema_rejections.other,
+        cloze_ineligibility.total,
+        cloze_ineligibility.missing_target,
+        cloze_ineligibility.ambiguous_target,
+        cloze_ineligibility.preexisting_blank,
+        cloze_ineligibility.missing_text,
+        cloze_ineligibility.other,
     )
 
     if not accepted:
@@ -564,6 +654,8 @@ def _request_payload(
             provider_returned_count=initial_returned,
             validated_candidate_count=len(accepted[:item_count]),
             rejections=initial_rejections,
+            schema_rejections=first_payload.schema_rejections,
+            cloze_ineligibility=cloze_ineligibility,
         ),
     )
 
@@ -622,16 +714,18 @@ def _persist_payload(
                 skipped_count += 1
                 continue
 
-            try:
-                blank_sentence = validate_blank_sentence(
-                    generated.word_or_phrase,
-                    generated.example_sentence,
-                    generated.blank_sentence,
-                )
-            except BlankSentenceError as exc:
-                raise VocabularyResponseError(
-                    "The generated quiz sentences could not be validated. Please try again."
-                ) from exc
+            blank_sentence = generated.blank_sentence
+            if blank_sentence is not None:
+                try:
+                    blank_sentence = validate_blank_sentence(
+                        generated.word_or_phrase,
+                        generated.example_sentence,
+                        blank_sentence,
+                    )
+                except BlankSentenceError as exc:
+                    raise VocabularyResponseError(
+                        "The generated quiz sentences could not be validated. Please try again."
+                    ) from exc
 
             vocabulary_item = VocabularyItem(
                 movie=locked_movie,
@@ -656,6 +750,8 @@ def _persist_payload(
             provider_returned_count=candidate_yield.provider_returned_count,
             validated_candidate_count=candidate_yield.validated_candidate_count,
             candidate_rejections=candidate_yield.rejections,
+            schema_rejections=candidate_yield.schema_rejections,
+            cloze_ineligibility=candidate_yield.cloze_ineligibility,
         )
 
 

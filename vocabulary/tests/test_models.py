@@ -36,6 +36,17 @@ class VocabularyItemModelTests(TestCase):
 
         self.assertEqual(item.cefr_level, "B1")
 
+    def test_item_without_cloze_data_passes_validation(self):
+        fields = vocabulary_item_fields(movie=self.movie)
+        fields["blank_sentence"] = None
+        item = VocabularyItem(**fields)
+
+        item.full_clean()
+        item.save()
+
+        self.assertIsNone(item.blank_sentence)
+        self.assertFalse(item.is_cloze_eligible)
+
     def test_model_validation_rejects_incorrect_blank(self):
         fields = vocabulary_item_fields(movie=self.movie)
         fields["blank_sentence"] = "This is not the source sentence: ___."

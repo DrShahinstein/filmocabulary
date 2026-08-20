@@ -32,7 +32,7 @@ class VocabularyItem(models.Model):
     cefr_level = models.CharField(max_length=2, choices=CefrLevel.choices)
     definition_en = models.TextField()
     example_sentence = models.TextField()
-    blank_sentence = models.TextField()
+    blank_sentence = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -78,8 +78,15 @@ class VocabularyItem(models.Model):
     def __str__(self) -> str:
         return f"{self.word_or_phrase} ({self.movie})"
 
+    @property
+    def is_cloze_eligible(self) -> bool:
+        return bool(self.blank_sentence)
+
     def clean(self) -> None:
         super().clean()
+        if not self.blank_sentence:
+            self.blank_sentence = None
+            return
         try:
             self.blank_sentence = validate_blank_sentence(
                 self.word_or_phrase,

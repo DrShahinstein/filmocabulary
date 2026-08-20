@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -70,10 +71,12 @@ class VocabularyItemCandidate(BaseModel):
 
 
 class VocabularyItemResponse(VocabularyItemCandidate):
-    blank_sentence: StrictStr
+    blank_sentence: StrictStr | None = None
 
     @model_validator(mode="after")
     def blank_is_derived_from_example(self) -> "VocabularyItemResponse":
+        if self.blank_sentence is None:
+            return self
         try:
             validate_blank_sentence(
                 self.word_or_phrase,
@@ -83,6 +86,23 @@ class VocabularyItemResponse(VocabularyItemCandidate):
         except BlankSentenceError as exc:
             raise ValueError(str(exc)) from exc
         return self
+
+
+class VocabularyExtractionEnvelope(BaseModel):
+    """Validate the response envelope while leaving items for per-item salvage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    movie_title: StrictStr
+    items: list[Any] = Field(
+        min_length=1,
+        max_length=MAX_GENERATION_CANDIDATES,
+    )
+
+    @field_validator("movie_title")
+    @classmethod
+    def clean_movie_title(cls, value: str) -> str:
+        return _clean_bounded_text(value, max_length=255)
 
 
 class VocabularyExtractionResponse(BaseModel):

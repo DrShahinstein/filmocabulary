@@ -57,10 +57,10 @@ def _yield_message(result: VocabularyGenerationResult) -> str | None:
             f"{_counted(count, 'generated candidate')} did not match the supplied source and "
             f"{'was' if count == 1 else 'were'} excluded."
         )
-    if VocabularyYieldReason.INVALID_EXAMPLE in reasons:
-        count = result.candidate_rejections.invalid_example
+    if VocabularyYieldReason.INVALID_SCHEMA in reasons:
+        count = result.candidate_rejections.malformed
         sentences.append(
-            f"{_counted(count, 'generated candidate')} could not form a valid quiz example and "
+            f"{_counted(count, 'generated candidate')} had invalid structured data and "
             f"{'was' if count == 1 else 'were'} excluded."
         )
     if VocabularyYieldReason.ALREADY_SAVED in reasons:
