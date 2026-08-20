@@ -2,10 +2,32 @@ from dataclasses import replace
 
 from django.test import TestCase
 
-from quizzes.forms import QuizAnswerForm
-from quizzes.services import generate_question
+from quizzes.forms import ClozeAnswerForm, PracticeSetupForm, QuizAnswerForm
+from quizzes.services import (
+    CLOZE_MODE,
+    DEFINITION_MODE,
+    MIXED_MODE,
+    generate_question,
+)
 
 from .factories import make_movie, make_user, make_vocabulary
+
+
+class PracticeSetupFormTests(TestCase):
+    def test_form_offers_all_three_quiz_modes_with_mixed_initially_selected(self):
+        user = make_user("setup-learner")
+
+        form = PracticeSetupForm(user=user)
+
+        self.assertEqual(
+            list(form.fields["mode"].choices),
+            [
+                (DEFINITION_MODE, "Definition only"),
+                (CLOZE_MODE, "Fill-in-the-blanks only"),
+                (MIXED_MODE, "Mixed"),
+            ],
+        )
+        self.assertEqual(form.fields["mode"].initial, MIXED_MODE)
 
 
 class QuizAnswerFormTests(TestCase):
@@ -60,3 +82,33 @@ class QuizAnswerFormTests(TestCase):
 
         self.assertFalse(form.is_valid())
         self.assertIn("selected_option", form.errors)
+
+
+class ClozeAnswerFormTests(TestCase):
+    def setUp(self):
+        self.user = make_user("cloze-form-learner")
+        movie = make_movie(self.user)
+        self.item = make_vocabulary(movie, word="scrutinize")
+        self.question = generate_question(
+            user=self.user,
+            mode=CLOZE_MODE,
+            target=self.item,
+        )
+
+    def test_form_uses_the_signed_question_token(self):
+        form = ClozeAnswerForm(question=self.question)
+
+        self.assertEqual(form.fields["question_token"].initial, self.question.token)
+        self.assertEqual(form.fields["answer"].label, "Missing word or phrase")
+
+    def test_form_rejects_a_blank_answer(self):
+        form = ClozeAnswerForm(
+            {
+                "question_token": self.question.token,
+                "answer": "   ",
+            },
+            question=self.question,
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("answer", form.errors)
