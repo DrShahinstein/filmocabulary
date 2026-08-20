@@ -47,6 +47,15 @@ scripts/home start
 Open <http://127.0.0.1:8000/>. `scripts/home start` safely repeats migrations, static-file
 collection, and Django's configuration check before starting Uvicorn.
 
+On Windows use `scripts\home.ps1` in place of `scripts/home`; the two scripts accept the same
+commands:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\home.ps1 prepare
+powershell -ExecutionPolicy Bypass -File scripts\home.ps1 manage createsuperuser
+powershell -ExecutionPolicy Bypass -File scripts\home.ps1 start
+```
+
 ### Trusted LAN access
 
 Give the server computer a stable address through the router, then change `.env`:
@@ -109,7 +118,5 @@ scripts/home manage <command>      Run any Django management command in Home mod
 ```
 
 Home production runs on Windows, macOS, and Linux. Uvicorn is a pure-Python ASGI server,
-so the same Home server starts on every platform without a POSIX-only dependency. The
-`scripts/home` wrapper is a POSIX shell script; on Windows use Git Bash, WSL, or run the
-equivalent commands directly: `manage.py migrate`, `manage.py collectstatic`,
-`manage.py check`, then `python -m config.uvicorn`.
+so the same Home server starts on every platform without a POSIX-only dependency. Use
+`scripts/home` on Linux and macOS, and `scripts\home.ps1` on Windows.
