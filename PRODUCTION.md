@@ -1,33 +1,44 @@
-# Home Production
+# Filmocabulary Home Server Setup
 
-Filmocabulary's production profile is designed for one household or a small trusted group.
-It runs on Linux, macOS, or Windows with SQLite, a single-process async Uvicorn server, WhiteNoise
-static files, and the existing installation-wide `LLM_*` configuration. It does not require
-PostgreSQL, Redis, Docker, a public domain, or a public Internet deployment.
+This profile runs Filmocabulary for one person or a small trusted household.
+It uses SQLite, Uvicorn, and WhiteNoise; PostgreSQL, Redis, Docker, and a public
+domain are not required.
 
-Production differs from Django's development server in important ways: debug pages are
-disabled, hostnames are validated, static assets use a versioned manifest, registrations
-are closed by default, and startup refuses placeholder secrets.
+Use it on a trusted LAN or private network. Do not expose it directly to the
+public Internet.
 
-### Install and configure
+## 1. Install
 
-Create the virtual environment as in Local Setup, then install the Home server dependency:
+Run these commands from the project directory.
 
-```bash
-python -m pip install -r requirements-production.txt
+### Windows (PowerShell)
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-production.txt
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
-Generate a deployment secret:
+### Linux or macOS
 
 ```bash
-python -c "import secrets; print(secrets.token_urlsafe(64))"
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements-production.txt
+cp .env.example .env
+chmod +x scripts/home
+./.venv/bin/python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
-Put that value in `DJANGO_SECRET_KEY` in `.env`. Keep the existing `LLM_*` values. For use
-only on this computer, these Home values are sufficient:
+The final command prints a private Django secret. Keep it for the next step.
+Skip the copy command when an existing `.env` must be preserved.
+
+## 2. Configure `.env`
+
+Set the generated secret and these Home values:
 
 ```dotenv
-# .env
+DJANGO_SECRET_KEY=paste-the-generated-value-here
 ALLOWED_HOSTS=localhost,127.0.0.1
 HOME_BIND=127.0.0.1:8000
 HOME_HTTPS=False
@@ -35,20 +46,16 @@ SIGNUP_ENABLED=False
 RATELIMIT_ENABLE=True
 ```
 
-Prepare the database and static files, create the first account, and start the server:
+Then configure the `LLM_*` variables. Configure `OPENSUBTITLES_*` too if
+automatic subtitle retrieval is wanted. `.env.example` documents every option
+and includes provider examples.
 
-```bash
-chmod +x scripts/home
-scripts/home prepare
-scripts/home manage createsuperuser
-scripts/home start
-```
+Production data uses `db.sqlite3` by default. To store it elsewhere, set
+`SQLITE_DATABASE_PATH` to an absolute path whose parent directory exists.
 
-Open <http://127.0.0.1:8000/>. `scripts/home start` safely repeats migrations, static-file
-collection, and Django's configuration check before starting Uvicorn.
+## 3. Prepare, create an account, and start
 
-On Windows use `scripts\home.ps1` in place of `scripts/home`; the two scripts accept the same
-commands:
+### Windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\home.ps1 prepare
@@ -56,21 +63,66 @@ powershell -ExecutionPolicy Bypass -File scripts\home.ps1 manage createsuperuser
 powershell -ExecutionPolicy Bypass -File scripts\home.ps1 start
 ```
 
-### Trusted LAN access
+### Linux or macOS
 
-Give the server computer a stable address through the router, then change `.env`:
+```bash
+scripts/home prepare
+scripts/home manage createsuperuser
+scripts/home start
+```
+
+Open <http://127.0.0.1:8000/> and sign in with the account just created.
+`start` safely runs migrations, static-file collection, and configuration checks
+again, so it is also the normal command after updating Filmocabulary.
+
+## Let other trusted devices connect
+
+Give the server computer a stable LAN address, then change `.env`:
 
 ```dotenv
-ALLOWED_HOSTS=localhost,127.0.0.1,192.168.1.50,filmocabulary.local
+ALLOWED_HOSTS=localhost,127.0.0.1,192.168.1.50
 HOME_BIND=0.0.0.0:8000
 ```
 
-Restart Filmocabulary and open `http://192.168.1.50:8000/` from another device. Permit port
-8000 only on the trusted private network in the computer's firewall. Do not configure
-router port forwarding or expose this service directly to the public Internet.
+Restart the server and open `http://192.168.1.50:8000/` from another device.
+Allow port 8000 only on the private network in the server firewall. Do not add
+router port forwarding.
 
-For remote access, a private overlay network such as Tailscale is preferable to opening a
-router port. If Tailscale Serve or another trusted reverse proxy provides HTTPS, set:
+## Accounts
+
+Home production keeps public signup closed by default. Create household users
+through `/admin/`, or temporarily set `SIGNUP_ENABLED=True`, restart, create the
+accounts, and set it back to `False`.
+
+## Backups
+
+Create a consistent SQLite snapshot while the server is running:
+
+```powershell
+# Windows: default destination, then a custom destination
+powershell -ExecutionPolicy Bypass -File scripts\home.ps1 backup
+powershell -ExecutionPolicy Bypass -File scripts\home.ps1 backup D:\Backups\filmocabulary.sqlite3
+```
+
+```bash
+# Linux/macOS: default destination, then a custom destination
+scripts/home backup
+scripts/home backup /mnt/backups/filmocabulary.sqlite3
+```
+
+Default backups go to the Git-ignored `backups/` directory, and existing files
+are never overwritten. POSIX backups are owner-only. Windows backups inherit
+the destination folder's ACL, so use a private user folder. Copy backups to
+another device regularly.
+
+To restore, stop the server, preserve the current database, copy the selected
+backup to `db.sqlite3` (or `SQLITE_DATABASE_PATH`), run `prepare`, and start
+again. Do not directly copy the live database while the server is writing.
+
+## Optional private HTTPS or remote access
+
+Prefer Tailscale or another private overlay network. When a trusted reverse
+proxy terminates HTTPS, configure:
 
 ```dotenv
 ALLOWED_HOSTS=your-private-hostname
@@ -80,43 +132,16 @@ HOME_HTTPS=True
 TRUST_X_FORWARDED_PROTO=True
 ```
 
-`HOME_HTTPS=True` enables HTTPS redirects, secure cookies, and HSTS together. Do not enable
-it when connecting directly over plain HTTP, or the browser will be redirected to an HTTPS
-service that does not exist.
+`HOME_HTTPS=True` enables HTTPS redirects, secure cookies, and HSTS together.
+Leave it `False` for direct HTTP connections.
 
-### Accounts and registration
+## Launcher commands
 
-Home production disables self-registration by default. Add household members through
-`/admin/`, or temporarily set `SIGNUP_ENABLED=True`, restart, create the required accounts,
-and disable it again. Development mode continues to allow signup regardless of this value.
+| Command | Action |
+| --- | --- |
+| `start` | Prepare and run the Home server |
+| `prepare` | Migrate, collect static files, and check configuration |
+| `backup [destination]` | Create a consistent SQLite snapshot |
+| `manage <command>` | Run a Django management command |
 
-### Backups and restoration
-
-Create a transactionally consistent SQLite snapshot while the server is running:
-
-```bash
-scripts/home backup
-scripts/home backup /path/on/another/device/filmocabulary.sqlite3
-```
-
-Default backups are written under `backups/`, excluded from Git, and readable only by their
-owner. Regularly copy them to another device. To restore, stop Filmocabulary, preserve the
-current `db.sqlite3`, copy the selected backup into its place, and run `scripts/home prepare`
-before restarting.
-
-If `SQLITE_DATABASE_PATH` is configured, restore to that path instead. Never copy the live
-SQLite database directly while the server is writing; use `scripts/home backup` to create a
-consistent snapshot.
-
-### Home command reference
-
-```text
-scripts/home start                 Prepare and run the Home server
-scripts/home prepare               Apply migrations, collect static files, and check config
-scripts/home backup [destination]  Create a consistent SQLite backup
-scripts/home manage <command>      Run any Django management command in Home mode
-```
-
-Home production runs on Windows, macOS, and Linux. Uvicorn is a pure-Python ASGI server,
-so the same Home server starts on every platform without a POSIX-only dependency. Use
-`scripts/home` on Linux and macOS, and `scripts\home.ps1` on Windows.
+Use `scripts\home.ps1` on Windows and `scripts/home` on Linux or macOS.

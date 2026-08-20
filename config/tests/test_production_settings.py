@@ -17,6 +17,8 @@ class HomeProductionSettingsTests(SimpleTestCase):
                     "DJANGO_SETTINGS_MODULE": "config.settings.production",
                     "DJANGO_SECRET_KEY": "home-test-secret-" + "x" * 64,
                     "ALLOWED_HOSTS": "localhost,127.0.0.1",
+                    # Keep probes independent of the developer's active .env.
+                    "SIGNUP_ENABLED": "False",
                     "SQLITE_DATABASE_PATH": os.path.join(
                         temporary_directory, "production.sqlite3"
                     ),
@@ -47,7 +49,7 @@ class HomeProductionSettingsTests(SimpleTestCase):
             )
         return json.loads(result.stdout)
 
-    def test_home_defaults_to_sqlite_and_plain_local_http(self):
+    def test_home_uses_sqlite_plain_local_http_and_closed_signup(self):
         configuration = self.run_settings_probe(HOME_HTTPS="False")
 
         self.assertEqual(configuration["engine"], "django.db.backends.sqlite3")
@@ -55,6 +57,11 @@ class HomeProductionSettingsTests(SimpleTestCase):
         self.assertFalse(configuration["csrf_secure"])
         self.assertFalse(configuration["session_secure"])
         self.assertFalse(configuration["signup"])
+
+    def test_home_can_deliberately_enable_signup(self):
+        configuration = self.run_settings_probe(SIGNUP_ENABLED="True")
+
+        self.assertTrue(configuration["signup"])
 
     def test_home_enables_transport_security_as_one_switch(self):
         configuration = self.run_settings_probe(HOME_HTTPS="True")

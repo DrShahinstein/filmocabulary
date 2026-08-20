@@ -1,4 +1,6 @@
+import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -16,14 +18,15 @@ class BackupDatabaseCommandTests(TransactionTestCase):
             destination = Path(temporary_directory) / "snapshot.sqlite3"
             call_command("backup_database", destination, verbosity=0)
 
-            with sqlite3.connect(destination) as backup:
+            with closing(sqlite3.connect(destination)) as backup:
                 usernames = backup.execute(
                     "SELECT username FROM auth_user WHERE username = ?",
                     ("backup-learner",),
                 ).fetchall()
 
             self.assertEqual(usernames, [("backup-learner",)])
-            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+            if os.name != "nt":
+                self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
 
     def test_backup_refuses_to_overwrite_an_existing_file(self):
         with TemporaryDirectory() as temporary_directory:

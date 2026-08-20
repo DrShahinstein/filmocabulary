@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -38,11 +39,14 @@ class Command(BaseCommand):
         destination.parent.mkdir(parents=True, exist_ok=True)
         connection.ensure_connection()
         try:
-            with sqlite3.connect(destination) as backup_connection:
+            with closing(sqlite3.connect(destination)) as backup_connection:
                 connection.connection.backup(backup_connection)
         except Exception:
             destination.unlink(missing_ok=True)
             raise
 
-        os.chmod(destination, 0o600)
+        # Windows inherits ACLs from the destination directory; chmod only maps
+        # to the read-only flag there and cannot express POSIX owner-only access.
+        if os.name != "nt":
+            os.chmod(destination, 0o600)
         self.stdout.write(self.style.SUCCESS(f"Database backup created: {destination}"))
