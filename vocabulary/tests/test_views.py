@@ -11,6 +11,7 @@ from movies.models import Movie
 from quizzes.models import UserWordStatus
 from vocabulary.ingestion import SourceDocument
 from vocabulary.models import VocabularyItem
+from vocabulary.querysets import VocabularyFilterSpec
 from vocabulary.services import (
     CandidateRejections,
     VocabularyGenerationResult,
@@ -522,6 +523,11 @@ class VocabularyViewTests(TestCase):
         self.assertTemplateUsed(response, "vocabulary/words_explorer.html")
         self.assertContains(response, self.item.word_or_phrase)
         self.assertNotContains(response, outsider.word_or_phrase)
+        self.assertEqual(
+            response.context["vocabulary_filter_spec"],
+            VocabularyFilterSpec(),
+        )
+        self.assertEqual(response.context["filter_query"], "")
 
         self.client.logout()
         response = self.client.get(url)
@@ -633,7 +639,39 @@ class VocabularyViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["filter_form"].is_valid())
         self.assertEqual(list(response.context["items"]), [])
+        self.assertIsNone(response.context["vocabulary_filter_spec"])
+        self.assertEqual(response.context["filter_query"], "")
         self.assertNotContains(response, outsider.word_or_phrase)
+
+    def test_words_explorer_exposes_canonical_validated_filter_state(self):
+        response = self.client.get(
+            reverse("words:index"),
+            {
+                "q": "  difficult   problem ",
+                "status": "saved",
+                "type": VocabularyItem.Type.NOUN,
+                "movie": self.movie.pk,
+                "cefr": ["C2", "B1", "C2"],
+                "page": 1,
+                "ignored": "do-not-preserve",
+            },
+        )
+
+        expected = VocabularyFilterSpec(
+            q="difficult problem",
+            status="saved",
+            word_type=VocabularyItem.Type.NOUN,
+            movie_id=self.movie.pk,
+            cefr_levels=("B1", "C2"),
+        )
+        self.assertEqual(response.context["vocabulary_filter_spec"], expected)
+        self.assertEqual(
+            response.context["filter_query"],
+            (
+                "q=difficult+problem&status=saved&type=noun"
+                f"&movie={self.movie.pk}&cefr=B1&cefr=C2"
+            ),
+        )
 
     def test_words_explorer_card_metadata_is_available_without_extra_queries(self):
         UserWordStatus.objects.create(
@@ -670,12 +708,14 @@ class VocabularyViewTests(TestCase):
 
         response = self.client.get(
             reverse("words:index"),
-            {"type": VocabularyItem.Type.VERB},
+            {"type": VocabularyItem.Type.VERB, "ignored": "do-not-preserve"},
         )
 
         self.assertEqual(len(response.context["items"]), 24)
         self.assertEqual(response.context["page_obj"].paginator.count, 26)
+        self.assertEqual(response.context["filter_query"], "type=verb")
         self.assertContains(response, "type=verb&amp;page=2")
+        self.assertNotContains(response, "ignored=do-not-preserve")
 
     def test_delete_is_post_only_and_scoped_to_owner(self):
         url = reverse("vocabulary:item_delete", args=[self.item.pk])
