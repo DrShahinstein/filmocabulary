@@ -6,31 +6,45 @@ from dataclasses import dataclass
 from django.core import signing
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Exists, Max, Min, OuterRef
+from django.db.models import Max, Min
 from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from movies.models import Movie
+from vocabulary.matching import find_term_matches, terms_are_equivalent
 from vocabulary.models import VocabularyItem
+from vocabulary.querysets import (
+    VocabularyFilterSpec,
+    filter_vocabulary_queryset,
+    owned_vocabulary_queryset,
+)
 
 from .models import UserWordStatus
 
 OPTION_LABELS = ("A", "B", "C", "D", "E")
-QUIZ_POOLS = ("collection", "learning")
+DEFINITION_MODE = "definition"
+CLOZE_MODE = "cloze"
+MIXED_MODE = "mixed"
+QUIZ_MODES = (DEFINITION_MODE, CLOZE_MODE, MIXED_MODE)
+QUIZ_KINDS = (DEFINITION_MODE, CLOZE_MODE)
+TRACKED_POOLS = ("collection", "learning")
+TARGETED_POOL = "targeted"
+QUIZ_POOLS = (*TRACKED_POOLS, TARGETED_POOL)
 QUESTION_SALT = "quizzes.multiple-choice.v1"
+TARGETED_SCOPE_SALT = "quizzes.targeted-scope.v1"
 QUESTION_MAX_AGE = 60 * 60
 
 
 class QuizUnavailableError(Exception):
-    """Raised when the selected pool cannot produce a complete MCQ."""
+    """Raised when the selected pool cannot produce a complete question."""
 
 
 class QuizTokenError(Exception):
-    """Raised when a signed question is invalid, expired, or no longer usable."""
+    """Raised when signed quiz state is invalid, expired, or no longer usable."""
 
 
 class DuplicateAnswerError(Exception):
-    """Raised when an already-scored signed question is submitted again."""
+    """Raised when an already-answered signed question is submitted again."""
 
 
 @dataclass(frozen=True)
@@ -41,21 +55,77 @@ class QuizOption:
 
 
 @dataclass(frozen=True)
-class MultipleChoiceQuestion:
+class QuizQuestion:
     target: VocabularyItem
     options: tuple[QuizOption, ...]
     token: str
     pool: str
+    mode: str
+    kind: str
     movie_ids: tuple[int, ...]
+    filter_spec: VocabularyFilterSpec | None
+    scope_token: str | None
     is_saved: bool
+
+    @property
+    def updates_progress(self) -> bool:
+        return self.pool in TRACKED_POOLS
+
+
+# Compatibility for app-local imports written before cloze questions existed.
+MultipleChoiceQuestion = QuizQuestion
 
 
 @dataclass(frozen=True)
 class AnswerResult:
-    question: MultipleChoiceQuestion
-    selected_option: QuizOption
+    question: QuizQuestion
+    selected_option: QuizOption | None
+    submitted_answer: str | None
+    correct_answer: str
     is_correct: bool
-    word_status: UserWordStatus
+    word_status: UserWordStatus | None
+
+    @property
+    def updates_progress(self) -> bool:
+        return self.question.updates_progress
+
+
+def sign_targeted_scope(*, user, filter_spec: VocabularyFilterSpec) -> str:
+    if not getattr(user, "is_authenticated", False) or user.pk is None:
+        raise QuizTokenError("Sign in again to start targeted practice.")
+    if not isinstance(filter_spec, VocabularyFilterSpec):
+        raise QuizTokenError("Choose valid word filters to start targeted practice.")
+    return signing.dumps(
+        {
+            "v": 1,
+            "user": user.pk,
+            "filters": filter_spec.as_payload(),
+        },
+        salt=TARGETED_SCOPE_SALT,
+        compress=True,
+    )
+
+
+def targeted_scope_from_token(*, user, token: str) -> VocabularyFilterSpec:
+    try:
+        payload = signing.loads(token, salt=TARGETED_SCOPE_SALT)
+    except signing.BadSignature as exc:
+        raise QuizTokenError(
+            "This filtered practice link is invalid. Return to Words Explorer and try again."
+        ) from exc
+
+    try:
+        if (
+            not isinstance(payload, dict)
+            or payload.get("v") != 1
+            or payload.get("user") != user.pk
+        ):
+            raise ValueError
+        return VocabularyFilterSpec.from_payload(payload["filters"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise QuizTokenError(
+            "This filtered practice link is invalid. Return to Words Explorer and try again."
+        ) from exc
 
 
 def _normalise_movie_ids(*, user, movie_ids):
@@ -78,20 +148,41 @@ def _normalise_movie_ids(*, user, movie_ids):
 
 
 def _owned_vocabulary(user, movie_ids=()):
-    saved_status = UserWordStatus.objects.filter(
-        user=user,
-        vocabulary_item_id=OuterRef("pk"),
-        is_saved=True,
-    )
     queryset = (
-        VocabularyItem.objects.filter(movie__user=user)
+        owned_vocabulary_queryset(user)
         .annotate(_trimmed_definition=Trim("definition_en"))
-        .annotate(_is_saved=Exists(saved_status))
         .exclude(_trimmed_definition="")
     )
     if movie_ids:
         queryset = queryset.filter(movie_id__in=movie_ids)
     return queryset
+
+
+def _cloze_eligible(queryset):
+    return (
+        queryset.filter(blank_sentence__isnull=False)
+        .annotate(_trimmed_blank=Trim("blank_sentence"))
+        .exclude(_trimmed_blank="")
+    )
+
+
+def targeted_practice_availability(*, user, filter_spec):
+    """Return definition/cloze availability for a validated Explorer scope."""
+    if not isinstance(filter_spec, VocabularyFilterSpec):
+        return False, False
+    targets = filter_vocabulary_queryset(_owned_vocabulary(user), filter_spec)
+    if not targets.exists():
+        return False, False
+    definition_keys = (
+        _owned_vocabulary(user)
+        .annotate(_definition_key=Lower(Trim("definition_en")))
+        .order_by()
+        .values_list("_definition_key", flat=True)
+        .distinct()[:5]
+    )
+    definition_available = len(list(definition_keys)) == 5
+    cloze_available = _cloze_eligible(targets).exists()
+    return definition_available, cloze_available
 
 
 def _random_row(queryset, rng):
@@ -104,21 +195,38 @@ def _random_row(queryset, rng):
     return row or queryset.order_by("pk").first()
 
 
-def _target_queryset(user, pool, *, movie_ids=(), excluded_ids=()):
+def _target_queryset(
+    user,
+    pool,
+    *,
+    mode,
+    movie_ids=(),
+    filter_spec=None,
+    excluded_ids=(),
+):
     owned = _owned_vocabulary(user, movie_ids).select_related("movie")
-    if pool == "learning":
-        return owned.filter(
+    if pool == TARGETED_POOL:
+        if filter_spec is None:
+            raise QuizUnavailableError("Choose filters in Words Explorer first.")
+        targets = filter_vocabulary_queryset(owned, filter_spec)
+    elif pool == "learning":
+        targets = owned.filter(
             user_statuses__user=user,
             user_statuses__status=UserWordStatus.Status.LEARNING,
-        ).exclude(pk__in=excluded_ids)
+        )
+    else:
+        encountered_ids = UserWordStatus.objects.filter(user=user).exclude(
+            status=UserWordStatus.Status.NEW
+        ).values("vocabulary_item_id")
+        eligible = _cloze_eligible(owned) if mode == CLOZE_MODE else owned
+        new_words = eligible.exclude(pk__in=encountered_ids).exclude(pk__in=excluded_ids)
+        if new_words.exists():
+            return new_words
+        return eligible.exclude(pk__in=excluded_ids)
 
-    encountered_ids = UserWordStatus.objects.filter(user=user).exclude(
-        status=UserWordStatus.Status.NEW
-    ).values("vocabulary_item_id")
-    new_words = owned.exclude(pk__in=encountered_ids).exclude(pk__in=excluded_ids)
-    if new_words.exists():
-        return new_words
-    return owned.exclude(pk__in=excluded_ids)
+    if mode == CLOZE_MODE:
+        targets = _cloze_eligible(targets)
+    return targets.exclude(pk__in=excluded_ids)
 
 
 def _select_distractors(*, user, target, movie_ids, rng):
@@ -159,62 +267,133 @@ def _select_distractors(*, user, target, movie_ids, rng):
     return selected
 
 
+def _has_cloze(item: VocabularyItem) -> bool:
+    return bool(item.blank_sentence and item.blank_sentence.strip())
+
+
+def _question_kind(*, mode, target, rng):
+    if mode == CLOZE_MODE:
+        return CLOZE_MODE
+    if mode == MIXED_MODE and _has_cloze(target) and rng.choice((False, True)):
+        return CLOZE_MODE
+    return DEFINITION_MODE
+
+
+def _empty_pool_message(*, pool, mode):
+    if pool == TARGETED_POOL:
+        if mode == CLOZE_MODE:
+            return "No matching words have a fill-in-the-blank sentence."
+        return "No words match this filtered practice set."
+    if pool == "learning":
+        if mode == CLOZE_MODE:
+            return "No Learning Pool words currently have a fill-in-the-blank sentence."
+        return "Your Learning Pool is empty. Missed words will appear here automatically."
+    if mode == CLOZE_MODE:
+        return "Add vocabulary with fill-in-the-blank sentences before starting cloze practice."
+    return "Add vocabulary to your library before starting practice."
+
+
 def generate_question(
     *,
     user,
     pool="collection",
+    mode=DEFINITION_MODE,
     target=None,
     movie_ids=None,
+    filter_spec=None,
+    scope_token=None,
     excluded_target_ids=(),
     rng=None,
 ):
-    """Build a five-option MCQ entirely from vocabulary already in the database."""
+    """Build a signed definition or cloze question from owned vocabulary."""
     if pool not in QUIZ_POOLS:
         raise QuizUnavailableError("Choose a valid practice pool.")
+    if mode not in QUIZ_MODES:
+        raise QuizUnavailableError("Choose a valid quiz mode.")
+    if pool == TARGETED_POOL and mode == MIXED_MODE:
+        raise QuizUnavailableError("Choose Definition or Fill-in-the-blanks practice.")
 
     normalized_movie_ids = _normalise_movie_ids(user=user, movie_ids=movie_ids)
+    if pool == TARGETED_POOL:
+        if normalized_movie_ids:
+            raise QuizUnavailableError("Filtered practice cannot use a separate movie scope.")
+        if scope_token is not None:
+            signed_spec = targeted_scope_from_token(user=user, token=scope_token)
+            if filter_spec is not None and signed_spec != filter_spec:
+                raise QuizUnavailableError("The filtered practice scope does not match.")
+            filter_spec = signed_spec
+        if not isinstance(filter_spec, VocabularyFilterSpec):
+            raise QuizUnavailableError("Choose filters in Words Explorer first.")
+        scope_token = scope_token or sign_targeted_scope(user=user, filter_spec=filter_spec)
+    elif filter_spec is not None or scope_token is not None:
+        raise QuizUnavailableError("Choose a valid practice pool.")
+
     rng = rng or random.SystemRandom()
     targets = _target_queryset(
         user,
         pool,
+        mode=mode,
         movie_ids=normalized_movie_ids,
+        filter_spec=filter_spec,
         excluded_ids=excluded_target_ids,
     )
     if target is None:
         target = _random_row(targets, rng)
     else:
-        allowed_targets = (
-            targets
-            if pool == "learning"
-            else _owned_vocabulary(user, normalized_movie_ids).select_related("movie")
-        )
+        if pool in ("learning", TARGETED_POOL) or mode == CLOZE_MODE:
+            allowed_targets = targets
+        else:
+            allowed_targets = _owned_vocabulary(
+                user, normalized_movie_ids
+            ).select_related("movie")
         target = allowed_targets.filter(pk=target.pk).first()
         if target is None:
             raise QuizUnavailableError("That word is not available in this practice pool.")
 
     if target is None:
-        message = (
-            "Your Learning Pool is empty. Missed words will appear here automatically."
-            if pool == "learning"
-            else "Add vocabulary to your library before starting practice."
-        )
-        raise QuizUnavailableError(message)
+        raise QuizUnavailableError(_empty_pool_message(pool=pool, mode=mode))
 
-    distractors = _select_distractors(
-        user=user,
-        target=target,
-        movie_ids=normalized_movie_ids,
-        rng=rng,
-    )
-    option_items = [target, *distractors]
-    rng.shuffle(option_items)
+    kind = _question_kind(mode=mode, target=target, rng=rng)
+    option_items = []
+    if kind == DEFINITION_MODE:
+        try:
+            distractors = _select_distractors(
+                user=user,
+                target=target,
+                # Targeted filters govern targets, not incidental distractors.
+                movie_ids=() if pool == TARGETED_POOL else normalized_movie_ids,
+                rng=rng,
+            )
+        except QuizUnavailableError:
+            if mode != MIXED_MODE:
+                raise
+            cloze_targets = _target_queryset(
+                user,
+                pool,
+                mode=CLOZE_MODE,
+                movie_ids=normalized_movie_ids,
+                filter_spec=filter_spec,
+                excluded_ids=excluded_target_ids,
+            )
+            target = _random_row(cloze_targets, rng)
+            if target is None:
+                raise
+            kind = CLOZE_MODE
+        else:
+            option_items = [target, *distractors]
+            rng.shuffle(option_items)
+
     option_ids = [item.pk for item in option_items]
     token = signing.dumps(
         {
+            "v": 2,
             "target": target.pk,
             "options": option_ids,
             "pool": pool,
+            "mode": mode,
+            "kind": kind,
             "movies": list(normalized_movie_ids),
+            "filters": filter_spec.as_payload() if filter_spec is not None else None,
             "nonce": secrets.token_urlsafe(8),
         },
         salt=QUESTION_SALT,
@@ -222,15 +401,23 @@ def generate_question(
     )
     options = tuple(
         QuizOption(label, item.pk, item.definition_en)
-        for label, item in zip(OPTION_LABELS, option_items, strict=True)
+        for label, item in zip(
+            OPTION_LABELS[: len(option_items)],
+            option_items,
+            strict=True,
+        )
     )
-    return MultipleChoiceQuestion(
+    return QuizQuestion(
         target=target,
         options=options,
         token=token,
         pool=pool,
+        mode=mode,
+        kind=kind,
         movie_ids=normalized_movie_ids,
-        is_saved=bool(target._is_saved),
+        filter_spec=filter_spec,
+        scope_token=scope_token,
+        is_saved=bool(target.is_saved_for_user),
     )
 
 
@@ -245,25 +432,31 @@ def question_from_token(*, user, token):
         raise QuizTokenError("This question has expired. Load a new one to continue.") from exc
 
     try:
+        if not isinstance(payload, dict):
+            raise TypeError
+        version = payload.get("v", 1)
         target_id = payload["target"]
         option_ids = payload["options"]
         pool = payload["pool"]
+        mode = payload.get("mode", DEFINITION_MODE)
+        kind = payload.get("kind", DEFINITION_MODE)
+        movie_ids = payload.get("movies", [])
+        filters_payload = payload.get("filters")
     except (KeyError, TypeError) as exc:
         raise QuizTokenError("This question is invalid. Load a new one to continue.") from exc
 
-    movie_ids = payload.get("movies", [])
-    valid_ids = (
-        isinstance(target_id, int)
+    valid_scalars = (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version in (1, 2)
+        and isinstance(target_id, int)
         and not isinstance(target_id, bool)
-        and isinstance(option_ids, list)
-        and len(option_ids) == 5
-        and all(
-            isinstance(value, int) and not isinstance(value, bool)
-            for value in option_ids
-        )
-        and len(set(option_ids)) == 5
-        and target_id in option_ids
         and pool in QUIZ_POOLS
+        and mode in QUIZ_MODES
+        and kind in QUIZ_KINDS
+        and not (mode == DEFINITION_MODE and kind != DEFINITION_MODE)
+        and not (mode == CLOZE_MODE and kind != CLOZE_MODE)
+        and isinstance(option_ids, list)
         and isinstance(movie_ids, list)
         and all(
             isinstance(value, int) and not isinstance(value, bool)
@@ -271,49 +464,96 @@ def question_from_token(*, user, token):
         )
         and len(set(movie_ids)) == len(movie_ids)
     )
-    if not valid_ids:
+    valid_options = (
+        kind == DEFINITION_MODE
+        and len(option_ids) == 5
+        and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in option_ids
+        )
+        and len(set(option_ids)) == 5
+        and target_id in option_ids
+    ) or (kind == CLOZE_MODE and option_ids == [])
+    if not valid_scalars or not valid_options:
         raise QuizTokenError("This question is invalid. Load a new one to continue.")
 
     try:
         normalized_movie_ids = _normalise_movie_ids(user=user, movie_ids=movie_ids)
-    except QuizUnavailableError as exc:
+        filter_spec = (
+            VocabularyFilterSpec.from_payload(filters_payload)
+            if filters_payload is not None
+            else None
+        )
+    except (QuizUnavailableError, TypeError, ValueError) as exc:
         raise QuizTokenError("This question is invalid. Load a new one to continue.") from exc
 
+    valid_scope = (
+        pool == TARGETED_POOL
+        and version == 2
+        and mode != MIXED_MODE
+        and not normalized_movie_ids
+        and filter_spec is not None
+    ) or (pool in TRACKED_POOLS and filter_spec is None)
+    if not valid_scope:
+        raise QuizTokenError("This question is invalid. Load a new one to continue.")
+
+    requested_ids = option_ids if kind == DEFINITION_MODE else [target_id]
+    item_movie_ids = () if pool == TARGETED_POOL else normalized_movie_ids
     items = {
         item.pk: item
-        for item in _owned_vocabulary(user, normalized_movie_ids)
-        .filter(pk__in=option_ids)
+        for item in _owned_vocabulary(user, item_movie_ids)
+        .filter(pk__in=requested_ids)
         .select_related("movie")
     }
-    if len(items) != 5:
+    if len(items) != len(requested_ids):
         raise QuizTokenError(
             "Part of this question is no longer available. Load a new one to continue."
         )
 
     target = items[target_id]
+    if kind == CLOZE_MODE and not _has_cloze(target):
+        raise QuizTokenError(
+            "This fill-in-the-blank question is no longer available. Load a new one to continue."
+        )
     options = tuple(
         QuizOption(label, item_id, items[item_id].definition_en)
-        for label, item_id in zip(OPTION_LABELS, option_ids, strict=True)
+        for label, item_id in zip(
+            OPTION_LABELS[: len(option_ids)],
+            option_ids,
+            strict=True,
+        )
     )
-    return MultipleChoiceQuestion(
+    scope_token = (
+        sign_targeted_scope(user=user, filter_spec=filter_spec)
+        if filter_spec is not None
+        else None
+    )
+    return QuizQuestion(
         target=target,
         options=options,
         token=token,
         pool=pool,
+        mode=mode,
+        kind=kind,
         movie_ids=normalized_movie_ids,
-        is_saved=bool(target._is_saved),
+        filter_spec=filter_spec,
+        scope_token=scope_token,
+        is_saved=bool(target.is_saved_for_user),
     )
 
 
 def skip_question(*, user, token, expected_pool=None):
-    """Return another question in the same scope without changing word state."""
+    """Return another question in the same signed scope without changing progress."""
     current = question_from_token(user=user, token=token)
     if expected_pool is not None and current.pool != expected_pool:
         raise QuizTokenError("This question belongs to a different practice pool.")
     return generate_question(
         user=user,
         pool=current.pool,
+        mode=current.mode,
         movie_ids=current.movie_ids,
+        filter_spec=current.filter_spec,
+        scope_token=current.scope_token,
         excluded_target_ids=(current.target.pk,),
     )
 
@@ -343,43 +583,86 @@ def toggle_saved_word(*, user, vocabulary_item_id):
     return vocabulary_item, word_status
 
 
+def _surface_cloze_answer(item: VocabularyItem) -> str:
+    matches = find_term_matches(item.example_sentence, item.word_or_phrase)
+    if len(matches) != 1:
+        return item.word_or_phrase
+    return " ".join(
+        item.example_sentence[start:end] for start, end in matches[0].spans
+    )
+
+
 @transaction.atomic
-def answer_question(*, user, token, selected_item_id):
+def answer_question(
+    *,
+    user,
+    token,
+    selected_item_id=None,
+    submitted_answer=None,
+):
     question = question_from_token(user=user, token=token)
-    options_by_id = {option.vocabulary_item_id: option for option in question.options}
-    if selected_item_id not in options_by_id:
-        raise QuizTokenError("Choose one of the five answers shown.")
+    selected_option = None
+    normalized_submission = None
+    correct_answer = question.target.word_or_phrase
+
+    if question.kind == DEFINITION_MODE:
+        options_by_id = {
+            option.vocabulary_item_id: option for option in question.options
+        }
+        if selected_item_id not in options_by_id:
+            raise QuizTokenError("Choose one of the five answers shown.")
+        selected_option = options_by_id[selected_item_id]
+        is_correct = selected_item_id == question.target.pk
+    else:
+        if not isinstance(submitted_answer, str):
+            raise QuizTokenError("Type the missing word or phrase.")
+        normalized_submission = " ".join(submitted_answer.split())
+        if not normalized_submission or len(normalized_submission) > 255:
+            raise QuizTokenError("Type the missing word or phrase.")
+        surface_answer = _surface_cloze_answer(question.target)
+        correct_answer = surface_answer
+        is_correct = terms_are_equivalent(
+            normalized_submission, question.target.word_or_phrase
+        ) or terms_are_equivalent(normalized_submission, surface_answer)
 
     token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     cache_key = f"quiz-answer:{user.pk}:{token_digest}"
     if not cache.add(cache_key, True, timeout=QUESTION_MAX_AGE):
-        raise DuplicateAnswerError("That question has already been scored.")
+        raise DuplicateAnswerError("That question has already been answered.")
 
+    status = None
     try:
-        # Serialize answers per user so concurrent tabs cannot race the counters.
-        user.__class__.objects.select_for_update().get(pk=user.pk)
-        status, _ = UserWordStatus.objects.get_or_create(
-            user=user,
-            vocabulary_item=question.target,
-        )
-        is_correct = selected_item_id == question.target.pk
-        if is_correct:
-            status.correct_count += 1
-            status.status = UserWordStatus.Status.MASTERED
-        else:
-            status.wrong_count += 1
-            status.status = UserWordStatus.Status.LEARNING
-        status.last_tested_at = timezone.now()
-        status.save(
-            update_fields=("correct_count", "wrong_count", "status", "last_tested_at")
-        )
+        if question.updates_progress:
+            # Serialize answers per user so concurrent tabs cannot race the counters.
+            user.__class__.objects.select_for_update().get(pk=user.pk)
+            status, _ = UserWordStatus.objects.get_or_create(
+                user=user,
+                vocabulary_item=question.target,
+            )
+            if is_correct:
+                status.correct_count += 1
+                status.status = UserWordStatus.Status.MASTERED
+            else:
+                status.wrong_count += 1
+                status.status = UserWordStatus.Status.LEARNING
+            status.last_tested_at = timezone.now()
+            status.save(
+                update_fields=(
+                    "correct_count",
+                    "wrong_count",
+                    "status",
+                    "last_tested_at",
+                )
+            )
     except Exception:
         cache.delete(cache_key)
         raise
 
     return AnswerResult(
         question=question,
-        selected_option=options_by_id[selected_item_id],
+        selected_option=selected_option,
+        submitted_answer=normalized_submission,
+        correct_answer=correct_answer,
         is_correct=is_correct,
         word_status=status,
     )

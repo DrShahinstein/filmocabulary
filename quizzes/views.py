@@ -10,16 +10,24 @@ from django.views.generic import ListView, TemplateView
 
 from vocabulary.models import VocabularyItem
 
-from .forms import PracticeSetupForm, QuizAnswerForm
+from .forms import (
+    ClozeAnswerForm,
+    PracticeSetupForm,
+    QuizAnswerForm,
+    TargetedPracticeLaunchForm,
+)
 from .models import UserWordStatus
 from .services import (
+    CLOZE_MODE,
     DuplicateAnswerError,
     QuizTokenError,
     QuizUnavailableError,
+    TARGETED_POOL,
     answer_question,
     generate_question,
     question_from_token,
     skip_question,
+    targeted_scope_from_token,
     toggle_saved_word,
 )
 
@@ -28,20 +36,83 @@ def _is_htmx(request):
     return request.headers.get("HX-Request") == "true"
 
 
-def _question_url(pool, movie_ids=()):
+def _question_url(
+    pool,
+    movie_ids=(),
+    *,
+    mode="definition",
+    scope_token=None,
+):
     url = reverse("quizzes:question", args=[pool])
-    query = urlencode([("movies", movie_id) for movie_id in movie_ids])
+    parameters = [("mode", mode)]
+    if pool == TARGETED_POOL:
+        if scope_token:
+            parameters.append(("scope", scope_token))
+    else:
+        parameters.extend(("movies", movie_id) for movie_id in movie_ids)
+    query = urlencode(parameters)
+    return f"{url}?{query}"
+
+
+def _explorer_url(filter_spec=None):
+    url = reverse("words:index")
+    if filter_spec is None:
+        return url
+    query = filter_spec.as_query_string()
     return f"{url}?{query}" if query else url
 
 
-def _question_context(*, pool, question=None, unavailable_message=None):
-    context = {"pool": pool}
+def _practice_metadata(*, pool, filter_spec=None):
+    if pool == TARGETED_POOL:
+        return {
+            "practice_label": "Filtered Words Explorer practice",
+            "finish_url": _explorer_url(filter_spec),
+            "finish_label": "Back to Words Explorer",
+        }
+    if pool == "learning":
+        return {
+            "practice_label": "Learning Pool",
+            "finish_url": reverse("quizzes:learning_pool"),
+            "finish_label": "Finish",
+        }
+    return {
+        "practice_label": "Collection",
+        "finish_url": reverse("quizzes:dashboard"),
+        "finish_label": "Finish",
+    }
+
+
+def _answer_form(question, data=None):
+    form_class = ClozeAnswerForm if question.kind == CLOZE_MODE else QuizAnswerForm
+    if data is None:
+        return form_class(question=question)
+    return form_class(data, question=question)
+
+
+def _question_context(
+    *,
+    pool,
+    question=None,
+    unavailable_message=None,
+    filter_spec=None,
+):
+    if question is not None:
+        filter_spec = question.filter_spec
+    context = {
+        "pool": pool,
+        **_practice_metadata(pool=pool, filter_spec=filter_spec),
+    }
     if question is not None:
         context.update(
             {
                 "question": question,
-                "form": QuizAnswerForm(question=question),
-                "next_question_url": _question_url(pool, question.movie_ids),
+                "form": _answer_form(question),
+                "next_question_url": _question_url(
+                    pool,
+                    question.movie_ids,
+                    mode=question.mode,
+                    scope_token=question.scope_token,
+                ),
             }
         )
     if unavailable_message is not None:
@@ -122,8 +193,52 @@ class SavedWordsView(LoginRequiredMixin, ListView):
 class QuizQuestionView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
         pool = kwargs["pool"]
+        filter_spec = None
+
+        if pool == TARGETED_POOL:
+            launch_form = TargetedPracticeLaunchForm(request.GET)
+            if not launch_form.is_valid():
+                context = _question_context(
+                    pool=pool,
+                    unavailable_message=(
+                        "Return to Words Explorer and choose Definition or "
+                        "Fill-in-the-blanks practice."
+                    ),
+                )
+                return self._render(request, context, status=400)
+            try:
+                filter_spec = targeted_scope_from_token(
+                    user=request.user,
+                    token=launch_form.cleaned_data["scope"],
+                )
+                question = generate_question(
+                    user=request.user,
+                    pool=pool,
+                    mode=launch_form.cleaned_data["mode"],
+                    filter_spec=filter_spec,
+                    scope_token=launch_form.cleaned_data["scope"],
+                )
+            except QuizTokenError as exc:
+                context = _question_context(
+                    pool=pool,
+                    unavailable_message=str(exc),
+                )
+                return self._render(request, context, status=400)
+            except QuizUnavailableError as exc:
+                context = _question_context(
+                    pool=pool,
+                    filter_spec=filter_spec,
+                    unavailable_message=str(exc),
+                )
+            else:
+                context = _question_context(pool=pool, question=question)
+            return self._render(request, context)
+
         setup_form = PracticeSetupForm(
-            {"movies": request.GET.getlist("movies")},
+            {
+                "movies": request.GET.getlist("movies"),
+                "mode": request.GET.get("mode", ""),
+            },
             user=request.user,
         )
         if not setup_form.is_valid():
@@ -131,12 +246,7 @@ class QuizQuestionView(LoginRequiredMixin, View):
                 pool=pool,
                 unavailable_message="Choose valid movies from your library.",
             )
-            template = (
-                "partials/mcq_question.html"
-                if _is_htmx(request)
-                else "quizzes/practice.html"
-            )
-            return render(request, template, context, status=400)
+            return self._render(request, context, status=400)
         movie_ids = tuple(
             setup_form.cleaned_data["movies"].values_list("pk", flat=True)
         )
@@ -144,19 +254,23 @@ class QuizQuestionView(LoginRequiredMixin, View):
             question = generate_question(
                 user=request.user,
                 pool=pool,
+                mode=setup_form.cleaned_data["mode"],
                 movie_ids=movie_ids,
             )
         except QuizUnavailableError as exc:
             context = _question_context(pool=pool, unavailable_message=str(exc))
         else:
             context = _question_context(pool=pool, question=question)
+        return self._render(request, context)
 
+    @staticmethod
+    def _render(request, context, status=200):
         template = (
             "partials/mcq_question.html"
             if _is_htmx(request)
             else "quizzes/practice.html"
         )
-        return render(request, template, context)
+        return render(request, template, context, status=status)
 
 
 class QuizSkipView(LoginRequiredMixin, View):
@@ -165,17 +279,32 @@ class QuizSkipView(LoginRequiredMixin, View):
 
     def post(self, request, *args, **kwargs):
         pool = kwargs["pool"]
+        current = None
         try:
-            question = skip_question(
+            current = question_from_token(
                 user=request.user,
                 token=request.POST.get("question_token", ""),
+            )
+            if current.pool != pool:
+                raise QuizTokenError("This question belongs to a different practice pool.")
+            question = skip_question(
+                user=request.user,
+                token=current.token,
                 expected_pool=pool,
             )
         except QuizTokenError as exc:
-            context = _question_context(pool=pool, unavailable_message=str(exc))
+            context = _question_context(
+                pool=pool,
+                filter_spec=current.filter_spec if current else None,
+                unavailable_message=str(exc),
+            )
             status = 400
         except QuizUnavailableError as exc:
-            context = _question_context(pool=pool, unavailable_message=str(exc))
+            context = _question_context(
+                pool=pool,
+                filter_spec=current.filter_spec if current else None,
+                unavailable_message=str(exc),
+            )
             status = 200
         else:
             context = _question_context(pool=pool, question=question)
@@ -229,7 +358,10 @@ class QuizAnswerView(LoginRequiredMixin, View):
             return render(
                 request,
                 "partials/mcq_question.html",
-                {"pool": kwargs["pool"], "unavailable_message": str(exc)},
+                _question_context(
+                    pool=kwargs["pool"],
+                    unavailable_message=str(exc),
+                ),
                 status=400,
             )
 
@@ -237,33 +369,49 @@ class QuizAnswerView(LoginRequiredMixin, View):
             return render(
                 request,
                 "partials/mcq_question.html",
-                {
-                    "pool": kwargs["pool"],
-                    "unavailable_message": "This question belongs to a different practice pool.",
-                },
+                _question_context(
+                    pool=kwargs["pool"],
+                    unavailable_message=(
+                        "This question belongs to a different practice pool."
+                    ),
+                ),
                 status=400,
             )
 
-        form = QuizAnswerForm(request.POST, question=question)
+        form = _answer_form(question, request.POST)
         if not form.is_valid():
+            context = {
+                **_question_context(pool=question.pool, question=question),
+                "form": form,
+            }
             return render(
                 request,
                 "partials/mcq_question.html",
-                {"pool": question.pool, "question": question, "form": form},
+                context,
                 status=422,
             )
 
+        answer_arguments = {
+            "user": request.user,
+            "token": form.cleaned_data["question_token"],
+        }
+        if question.kind == CLOZE_MODE:
+            answer_arguments["submitted_answer"] = form.cleaned_data["answer"]
+        else:
+            answer_arguments["selected_item_id"] = form.cleaned_data[
+                "selected_option"
+            ]
         try:
-            result = answer_question(
-                user=request.user,
-                token=form.cleaned_data["question_token"],
-                selected_item_id=form.cleaned_data["selected_option"],
-            )
+            result = answer_question(**answer_arguments)
         except (QuizTokenError, DuplicateAnswerError) as exc:
             return render(
                 request,
                 "partials/mcq_question.html",
-                {"pool": question.pool, "unavailable_message": str(exc)},
+                _question_context(
+                    pool=question.pool,
+                    filter_spec=question.filter_spec,
+                    unavailable_message=str(exc),
+                ),
                 status=400,
             )
 
@@ -273,6 +421,12 @@ class QuizAnswerView(LoginRequiredMixin, View):
             "next_question_url": _question_url(
                 question.pool,
                 result.question.movie_ids,
+                mode=result.question.mode,
+                scope_token=result.question.scope_token,
+            ),
+            **_practice_metadata(
+                pool=question.pool,
+                filter_spec=question.filter_spec,
             ),
         }
         template = (

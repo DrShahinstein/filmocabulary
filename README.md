@@ -9,7 +9,9 @@ Filmocabulary is a smart vocabulary learning web-app that transforms film subtit
 - Optional `.srt` or `.txt` upload when automatic lookup is unavailable
 - Local subtitle filtering and per-user caching to reduce repeated input-token usage
 - Saved movie library with vocabulary management
-- Five-option multiple-choice practice with part-of-speech-aware distractors
+- Definition, fill-in-the-blank, and mixed practice modes
+- Part-of-speech-aware distractors for five-option definition questions
+- Definition or cloze practice for any Words Explorer filter, without changing progress
 - A focused Learning Pool plus new, learning, and mastered progress tracking
 - HTMX and native JavaScript interactions without full-page reloads
 

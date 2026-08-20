@@ -4,11 +4,17 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models.functions import Lower
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 from django.views.generic import ListView, TemplateView
 from django_ratelimit.decorators import ratelimit
 
 from movies.models import Movie
+from quizzes.services import (
+    TARGETED_POOL,
+    sign_targeted_scope,
+    targeted_practice_availability,
+)
 
 from .forms import GenerateVocabularyForm, VocabularyExplorerFilterForm
 from .models import VocabularyItem
@@ -135,6 +141,31 @@ class VocabularyExplorerView(LoginRequiredMixin, ListView):
         context["filter_query"] = (
             filter_spec.as_query_string() if filter_spec is not None else ""
         )
+        context["definition_quiz_available"] = False
+        context["cloze_quiz_available"] = False
+        context["targeted_definition_url"] = ""
+        context["targeted_cloze_url"] = ""
+        if filter_spec is not None:
+            definition_available, cloze_available = targeted_practice_availability(
+                user=self.request.user,
+                filter_spec=filter_spec,
+            )
+            context["definition_quiz_available"] = definition_available
+            context["cloze_quiz_available"] = cloze_available
+            if definition_available or cloze_available:
+                scope_token = sign_targeted_scope(
+                    user=self.request.user,
+                    filter_spec=filter_spec,
+                )
+                practice_url = reverse("quizzes:question", args=[TARGETED_POOL])
+                if definition_available:
+                    context["targeted_definition_url"] = (
+                        f"{practice_url}?mode=definition&scope={scope_token}"
+                    )
+                if cloze_available:
+                    context["targeted_cloze_url"] = (
+                        f"{practice_url}?mode=cloze&scope={scope_token}"
+                    )
         return context
 
 
