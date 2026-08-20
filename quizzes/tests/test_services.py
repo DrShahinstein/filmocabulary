@@ -9,17 +9,24 @@ from django.test import TestCase
 
 from quizzes.models import UserWordStatus
 from quizzes.services import (
+    CLOZE_MODE,
+    DEFINITION_MODE,
+    MIXED_MODE,
     DuplicateAnswerError,
     QUESTION_SALT,
+    TARGETED_POOL,
     QuizTokenError,
     QuizUnavailableError,
     answer_question,
     generate_question,
     question_from_token,
+    sign_targeted_scope,
     skip_question,
+    targeted_scope_from_token,
     toggle_saved_word,
 )
 from vocabulary.models import VocabularyItem
+from vocabulary.querysets import VocabularyFilterSpec
 
 from .factories import make_movie, make_user, make_vocabulary
 
@@ -209,6 +216,276 @@ class QuizEngineTests(TestCase):
 
         self.assertNotEqual(following.target, current.target)
         self.assertFalse(UserWordStatus.objects.filter(user=self.user).exists())
+
+
+class ClozeQuizTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.user = make_user("cloze-learner")
+        self.movie = make_movie(self.user)
+
+    def test_cloze_question_does_not_require_five_vocabulary_items(self):
+        item = make_vocabulary(
+            self.movie,
+            word="scrutinize",
+            sentence="The reporter will ___ every detail.",
+        )
+
+        question = generate_question(user=self.user, mode=CLOZE_MODE)
+        decoded = question_from_token(user=self.user, token=question.token)
+
+        self.assertEqual(question.target, item)
+        self.assertEqual(question.kind, CLOZE_MODE)
+        self.assertEqual(question.options, ())
+        self.assertEqual(decoded.target, item)
+        self.assertEqual(decoded.kind, CLOZE_MODE)
+
+    def test_inflected_cloze_answer_updates_tracked_progress(self):
+        item = VocabularyItem.objects.create(
+            movie=self.movie,
+            word_or_phrase="scrutinize",
+            type=VocabularyItem.Type.VERB,
+            cefr_level=VocabularyItem.CefrLevel.C1,
+            definition_en="Examine something very carefully.",
+            example_sentence="The reporter scrutinized every detail.",
+            blank_sentence="The reporter ___ every detail.",
+        )
+        correct_question = generate_question(
+            user=self.user,
+            mode=CLOZE_MODE,
+            target=item,
+        )
+
+        correct_result = answer_question(
+            user=self.user,
+            token=correct_question.token,
+            submitted_answer="  SCRUTINIZED  ",
+        )
+
+        status = UserWordStatus.objects.get(user=self.user, vocabulary_item=item)
+        self.assertTrue(correct_result.is_correct)
+        self.assertTrue(correct_result.updates_progress)
+        self.assertEqual(correct_result.submitted_answer, "SCRUTINIZED")
+        self.assertEqual(correct_result.correct_answer, "scrutinized")
+        self.assertEqual(status.status, UserWordStatus.Status.MASTERED)
+        self.assertEqual(status.correct_count, 1)
+        self.assertEqual(status.wrong_count, 0)
+        self.assertIsNotNone(status.last_tested_at)
+
+        wrong_question = generate_question(
+            user=self.user,
+            mode=CLOZE_MODE,
+            target=item,
+        )
+        wrong_result = answer_question(
+            user=self.user,
+            token=wrong_question.token,
+            submitted_answer="reviewed",
+        )
+
+        status.refresh_from_db()
+        self.assertFalse(wrong_result.is_correct)
+        self.assertEqual(status.status, UserWordStatus.Status.LEARNING)
+        self.assertEqual(status.correct_count, 1)
+        self.assertEqual(status.wrong_count, 1)
+
+    def test_separable_phrasal_verb_accepts_inflected_answer(self):
+        item = VocabularyItem.objects.create(
+            movie=self.movie,
+            word_or_phrase="brush off",
+            type=VocabularyItem.Type.PHRASAL_VERB,
+            cefr_level=VocabularyItem.CefrLevel.C1,
+            definition_en="Dismiss something as unimportant.",
+            example_sentence="She brushed the criticism off immediately.",
+            blank_sentence="She ___ the criticism ___ immediately.",
+        )
+        question = generate_question(
+            user=self.user,
+            mode=CLOZE_MODE,
+            target=item,
+        )
+
+        result = answer_question(
+            user=self.user,
+            token=question.token,
+            submitted_answer="brushed off",
+        )
+
+        self.assertTrue(result.is_correct)
+        self.assertEqual(result.correct_answer, "brushed off")
+        self.assertEqual(
+            UserWordStatus.objects.get(user=self.user, vocabulary_item=item).status,
+            UserWordStatus.Status.MASTERED,
+        )
+
+    def test_mixed_mode_selects_both_kinds_and_skip_preserves_mode(self):
+        items = [
+            make_vocabulary(
+                self.movie,
+                word=f"mixed-{index}",
+                definition=f"Mixed meaning {index}.",
+            )
+            for index in range(5)
+        ]
+
+        cloze_question = generate_question(
+            user=self.user,
+            mode=MIXED_MODE,
+            target=items[0],
+            rng=random.Random(0),
+        )
+        definition_question = generate_question(
+            user=self.user,
+            mode=MIXED_MODE,
+            target=items[0],
+            rng=random.Random(1),
+        )
+        following = skip_question(user=self.user, token=cloze_question.token)
+
+        self.assertEqual(cloze_question.kind, CLOZE_MODE)
+        self.assertEqual(definition_question.kind, DEFINITION_MODE)
+        self.assertEqual(cloze_question.mode, MIXED_MODE)
+        self.assertEqual(definition_question.mode, MIXED_MODE)
+        self.assertEqual(following.mode, MIXED_MODE)
+        self.assertNotEqual(following.target, cloze_question.target)
+        self.assertEqual(
+            question_from_token(user=self.user, token=following.token).mode,
+            MIXED_MODE,
+        )
+
+
+class TargetedPracticeTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.user = make_user("targeted-learner")
+        self.movie = make_movie(self.user)
+        self.distractors = [
+            make_vocabulary(
+                self.movie,
+                word=f"distractor-{index}",
+                definition=f"Distractor meaning {index}.",
+            )
+            for index in range(5)
+        ]
+
+    def test_signed_scope_is_user_bound_and_round_trips_exact_filters(self):
+        spec = VocabularyFilterSpec(
+            q="distractor",
+            word_type=VocabularyItem.Type.ADJECTIVE,
+            movie_id=self.movie.pk,
+            cefr_levels=(VocabularyItem.CefrLevel.C1,),
+        )
+        token = sign_targeted_scope(user=self.user, filter_spec=spec)
+        other_user = make_user("targeted-scope-outsider")
+
+        self.assertEqual(
+            targeted_scope_from_token(user=self.user, token=token),
+            spec,
+        )
+        with self.assertRaises(QuizTokenError):
+            targeted_scope_from_token(user=other_user, token=token)
+        with self.assertRaises(QuizTokenError):
+            targeted_scope_from_token(user=self.user, token=f"{token}x")
+
+    def test_targeted_definition_uses_exact_filter_and_does_not_mutate_status(self):
+        target = VocabularyItem.objects.create(
+            movie=self.movie,
+            word_or_phrase="read between the lines",
+            type=VocabularyItem.Type.IDIOM,
+            cefr_level=VocabularyItem.CefrLevel.C2,
+            definition_en="Infer a concealed meaning.",
+            example_sentence="She could read between the lines of his denial.",
+            blank_sentence="She could ___ of his denial.",
+        )
+        status = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=target,
+            status=UserWordStatus.Status.MASTERED,
+            is_saved=True,
+            correct_count=7,
+            wrong_count=3,
+        )
+        make_vocabulary(
+            self.movie,
+            word="read carefully",
+            definition="Examine written material with care.",
+            word_type=VocabularyItem.Type.VERB,
+            cefr_level=VocabularyItem.CefrLevel.C2,
+        )
+        spec = VocabularyFilterSpec(
+            q="read",
+            status=UserWordStatus.Status.MASTERED,
+            word_type=VocabularyItem.Type.IDIOM,
+            movie_id=self.movie.pk,
+            cefr_levels=(VocabularyItem.CefrLevel.C2,),
+        )
+        scope_token = sign_targeted_scope(user=self.user, filter_spec=spec)
+
+        question = generate_question(
+            user=self.user,
+            pool=TARGETED_POOL,
+            mode=DEFINITION_MODE,
+            scope_token=scope_token,
+            rng=random.Random(4),
+        )
+        wrong_id = next(
+            option.vocabulary_item_id
+            for option in question.options
+            if option.vocabulary_item_id != target.pk
+        )
+        result = answer_question(
+            user=self.user,
+            token=question.token,
+            selected_item_id=wrong_id,
+        )
+
+        status.refresh_from_db()
+        self.assertEqual(question.target, target)
+        self.assertEqual(question.filter_spec, spec)
+        self.assertFalse(result.is_correct)
+        self.assertFalse(result.updates_progress)
+        self.assertIsNone(result.word_status)
+        self.assertEqual(status.status, UserWordStatus.Status.MASTERED)
+        self.assertTrue(status.is_saved)
+        self.assertEqual(status.correct_count, 7)
+        self.assertEqual(status.wrong_count, 3)
+        self.assertIsNone(status.last_tested_at)
+
+    def test_targeted_cloze_does_not_create_status_and_question_is_owner_bound(self):
+        target = make_vocabulary(
+            self.movie,
+            word="untracked-target",
+            definition="A word used only for targeted practice.",
+            sentence="The ___ remained untracked.",
+        )
+        spec = VocabularyFilterSpec(q="untracked-target")
+        scope_token = sign_targeted_scope(user=self.user, filter_spec=spec)
+        question = generate_question(
+            user=self.user,
+            pool=TARGETED_POOL,
+            mode=CLOZE_MODE,
+            scope_token=scope_token,
+        )
+
+        result = answer_question(
+            user=self.user,
+            token=question.token,
+            submitted_answer="untracked-target",
+        )
+
+        self.assertEqual(question.target, target)
+        self.assertTrue(result.is_correct)
+        self.assertFalse(result.updates_progress)
+        self.assertIsNone(result.word_status)
+        self.assertFalse(
+            UserWordStatus.objects.filter(user=self.user, vocabulary_item=target).exists()
+        )
+
+        other_user = make_user("targeted-question-outsider")
+        with self.assertRaises(QuizTokenError):
+            question_from_token(user=other_user, token=question.token)
 
 
 class AnswerTrackingTests(TestCase):
