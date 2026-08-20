@@ -71,7 +71,7 @@ again, so it is also the normal command after updating Filmocabulary.
 ## Let other trusted devices connect (LAN)
 
 Find your machine's IPv4 address. <br/>
-(e.g. Windows: `ipconfig.exe` | Linux: `ip addr`)
+(e.g. Windows: `ipconfig.exe` | Linux: `hostname -I`)
 
 For example it could be this: `192.168.1.50`
 
@@ -91,13 +91,12 @@ router port forwarding.
 Home production keeps public signup closed by default.
 
 Use `scripts/home manage createsuperuser` to create an administrator.
-Navigate to `/admin/` with it while server is running. This way you can manage regular household accounts.
+Navigate to `/admin/` and log in with it while server is running.
+The django admin panel lets you manage anything: changing passwords, creating household accounts...
 
 Or just set `SIGNUP_ENABLED=True` in your `.env`.
 
-If a user forgets their password, reset it with
-`scripts/home manage changepassword USERNAME` on Linux or macOS, or
-`scripts\home.ps1 manage changepassword USERNAME` on Windows.
+If you ever need to reset passwords: `scripts/home manage changepassword USERNAME`
 
 ## Backups
 
