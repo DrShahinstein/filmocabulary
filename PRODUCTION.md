@@ -9,29 +9,27 @@ public Internet.
 
 ## 1. Install
 
-Run these commands from the project directory.
-
 ### Windows (PowerShell)
 
+If you can't run scripts on your windows machine, run: <br/>
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` <br/>
+in the first place.
+
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-production.txt
-Copy-Item .env.example .env
-.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-production.txt
+python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
 ### Linux or macOS
 
 ```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -r requirements-production.txt
-cp .env.example .env
-chmod +x scripts/home
-./.venv/bin/python -c "import secrets; print(secrets.token_urlsafe(64))"
+source .venv/bin/activate
+python -m pip install -r requirements-production.txt
+python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
 The final command prints a private Django secret. Keep it for the next step.
-Skip the copy command if an existing `.env` must be preserved.
 
 ## 2. Configure `.env`
 
@@ -46,21 +44,16 @@ SIGNUP_ENABLED=False
 RATELIMIT_ENABLE=True
 ```
 
-Configure the `LLM_*` variables next. Configure `OPENSUBTITLES_*` too if you
-want automatic subtitle retrieval. `.env.example` documents every option and
-includes provider examples.
-
 Production data uses `db.sqlite3` by default. To store it elsewhere, set
 `SQLITE_DATABASE_PATH` to an absolute path whose parent directory exists.
 
 ## 3. Prepare, create an account, and start
 
 ### Windows
-
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\home.ps1 prepare
-powershell -ExecutionPolicy Bypass -File scripts\home.ps1 manage createsuperuser
-powershell -ExecutionPolicy Bypass -File scripts\home.ps1 start
+scripts\home.ps1 prepare
+scripts\home.ps1 manage createsuperuser
+scripts\home.ps1 start
 ```
 
 ### Linux or macOS
@@ -77,18 +70,19 @@ again, so it is also the normal command after updating Filmocabulary.
 
 ## Let other trusted devices connect (LAN)
 
-Find the server machine's IPv4 address (`ipconfig.exe` on Windows or `ip addr`
-on Linux). For example, it might be `192.168.1.50`.
+Find your machine's IPv4 address. <br/>
+(e.g. Windows: `ipconfig.exe` | Linux: `ip addr`)
 
-Then edit `.env`:
+For example it could be this: `192.168.1.50`
+
+Edit `.env`:
 
 ```dotenv
 ALLOWED_HOSTS=localhost,127.0.0.1,192.168.1.50
 HOME_BIND=0.0.0.0:8000
 ```
 
-Restart the server and open `http://192.168.1.50:8000/` from another trusted
-device.
+Restart the server and open `http://192.168.1.50:8000/` from any device.
 Allow port 8000 only on the private network in the server firewall. Do not add
 router port forwarding.
 
@@ -96,10 +90,10 @@ router port forwarding.
 
 Home production keeps public signup closed by default.
 
-The `createsuperuser` command in step 3 creates an administrator. While the
-server is running, use `/admin/` to create and manage regular household users.
-Alternatively, temporarily set `SIGNUP_ENABLED=True`, restart the server, let
-the users register, and set it back to `False`.
+Use `scripts/home manage createsuperuser` to create an administrator.
+Navigate to `/admin/` with it while server is running. This way you can manage regular household accounts.
+
+Or just set `SIGNUP_ENABLED=True` in your `.env`.
 
 ## Backups
 
@@ -107,8 +101,8 @@ Create a consistent SQLite snapshot while the server is running:
 
 ```powershell
 # Windows: default destination, then a custom destination
-powershell -ExecutionPolicy Bypass -File scripts\home.ps1 backup
-powershell -ExecutionPolicy Bypass -File scripts\home.ps1 backup D:\Backups\filmocabulary.sqlite3
+scripts\home.ps1 backup
+scripts\home.ps1 backup D:\Backups\filmocabulary.sqlite3
 ```
 
 ```bash
