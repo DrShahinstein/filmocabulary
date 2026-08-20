@@ -5,22 +5,36 @@
     <div class="quiz-feedback__result">
         <i data-lucide="{% if result.is_correct %}circle-check-big{% else %}circle-x{% endif %}" aria-hidden="true"></i>
         <div>
-            <p class="page-kicker">{% if result.is_correct %}Correct · Mastered{% else %}Not quite · Added to Learning Pool{% endif %}</p>
+            <p class="page-kicker">
+                {% if result.is_correct %}
+                    Correct{% if result.question.updates_progress %} · Mastered{% endif %}
+                {% else %}
+                    Not quite{% if result.question.updates_progress %} · Added to Learning Pool{% endif %}
+                {% endif %}
+            </p>
             <h2>{{ result.question.target.word_or_phrase }}</h2>
             <p>{{ result.question.target.definition_en }}</p>
         </div>
     </div>
     {% if not result.is_correct %}
-        <p class="quiz-feedback__submitted">You chose: {{ result.selected_option.definition }}</p>
+        <p class="quiz-feedback__submitted">
+            {% if result.question.kind == 'cloze' %}You entered: {{ result.submitted_answer }}{% else %}You chose: {{ result.selected_option.definition }}{% endif %}
+        </p>
     {% endif %}
     <p class="mcq-context">{{ result.question.target.example_sentence }}</p>
+    {% if not result.question.updates_progress %}
+        <p class="quiz-scope-note">
+            <i data-lucide="shield-check" aria-hidden="true"></i>
+            Free practice · Progress unchanged
+        </p>
+    {% endif %}
     <div class="button-row">
         <a class="button button--primary"
            href="{{ next_question_url }}"
            hx-get="{{ next_question_url }}"
            hx-target="#quiz-region"
            hx-swap="innerHTML">Next question</a>
-        {% if not result.is_correct %}
+        {% if not result.is_correct and result.question.updates_progress %}
             <a class="button button--secondary" href="{% url 'quizzes:learning_pool' %}">Study Learning Pool</a>
         {% endif %}
     </div>

@@ -6,8 +6,40 @@
         </div>
     {% elif items %}
         <div class="word-results__summary">
-            <p><strong>{{ page_obj.paginator.count }}</strong> matching word{{ page_obj.paginator.count|pluralize }}</p>
-            <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            <div class="word-results__summary-copy">
+                <p><strong>{{ page_obj.paginator.count }}</strong> matching word{{ page_obj.paginator.count|pluralize }}</p>
+                <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            </div>
+            <div class="word-results__practice" aria-label="Practice matching words">
+                {% if definition_quiz_available %}
+                    <a class="button button--secondary button--small" href="{{ targeted_definition_url }}">
+                        <i data-lucide="list-checks" aria-hidden="true"></i>
+                        Definition Quiz
+                    </a>
+                {% else %}
+                    <button class="button button--secondary button--small"
+                            type="button"
+                            disabled
+                            title="At least five matching words with distinct definitions are needed.">
+                        <i data-lucide="list-checks" aria-hidden="true"></i>
+                        Definition Quiz
+                    </button>
+                {% endif %}
+                {% if cloze_quiz_available %}
+                    <a class="button button--primary button--small" href="{{ targeted_cloze_url }}">
+                        <i data-lucide="text-cursor-input" aria-hidden="true"></i>
+                        Fill-in-the-blanks Quiz
+                    </a>
+                {% else %}
+                    <button class="button button--primary button--small"
+                            type="button"
+                            disabled
+                            title="None of the matching words has a fill-in-the-blank sentence.">
+                        <i data-lucide="text-cursor-input" aria-hidden="true"></i>
+                        Fill-in-the-blanks Quiz
+                    </button>
+                {% endif %}
+            </div>
         </div>
         <div class="word-card-grid">
             {% for item in items %}

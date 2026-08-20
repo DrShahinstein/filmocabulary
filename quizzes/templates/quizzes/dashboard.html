@@ -60,6 +60,14 @@
             <p>Select one or several films, or leave everything unchecked to practice your full collection.</p>
         </div>
         <form class="practice-filter__form" method="get" action="{% url 'quizzes:question' 'collection' %}">
+            <fieldset class="quiz-field--mode">
+                <legend>{{ practice_form.mode.label }}</legend>
+                <div class="quiz-mode-options">
+                    {{ practice_form.mode }}
+                </div>
+                {% if practice_form.mode.help_text %}<p class="help-text">{{ practice_form.mode.help_text }}</p>{% endif %}
+                {% for error in practice_form.mode.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
+            </fieldset>
             <fieldset class="quiz-field--movies">
                 <legend>{{ practice_form.movies.label }}</legend>
                 {{ practice_form.movies }}

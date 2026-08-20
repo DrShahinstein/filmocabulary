@@ -3,7 +3,8 @@
         <i data-lucide="layers-3" aria-hidden="true"></i>
         <h2>Practice is not ready yet</h2>
         <p>{{ unavailable_message }}</p>
-        <a class="button button--primary" href="{% url 'quizzes:dashboard' %}">View progress</a>
+        <a class="button button--primary"
+           href="{% if finish_url %}{{ finish_url }}{% else %}{% url 'quizzes:dashboard' %}{% endif %}">{{ finish_label|default:"View progress" }}</a>
     </section>
 {% else %}
     <section class="quiz-panel">
@@ -13,13 +14,27 @@
                 <span>{{ question.target.get_type_display }}</span>
                 <span aria-hidden="true">·</span>
                 <span>{{ question.target.movie.title }}</span>
+                <span class="status-badge">{% if question.kind == 'cloze' %}Cloze{% else %}Definition{% endif %}</span>
             </div>
             {% include "partials/bookmark_button.html" with item=question.target is_saved=question.is_saved %}
         </div>
-        <p class="page-kicker">Which definition best matches</p>
-        <h2 class="mcq-term">{{ question.target.word_or_phrase }}</h2>
-        {% if question.target.example_sentence %}
-            <p class="mcq-context">{{ question.target.example_sentence }}</p>
+        {% if not question.updates_progress %}
+            <p class="quiz-scope-note">
+                <i data-lucide="shield-check" aria-hidden="true"></i>
+                Free practice · Progress unchanged
+            </p>
+        {% endif %}
+
+        {% if question.kind == 'cloze' %}
+            <p class="page-kicker">Complete the sentence</p>
+            <h2 class="visually-hidden">Fill in the missing word or phrase</h2>
+            <p class="cloze-prompt">{{ question.target.blank_sentence }}</p>
+        {% else %}
+            <p class="page-kicker">Which definition best matches</p>
+            <h2 class="mcq-term">{{ question.target.word_or_phrase }}</h2>
+            {% if question.target.example_sentence %}
+                <p class="mcq-context">{{ question.target.example_sentence }}</p>
+            {% endif %}
         {% endif %}
 
         <form class="mcq-form"
@@ -32,15 +47,24 @@
               novalidate>
             {% csrf_token %}
             {{ form.question_token }}
-            <fieldset>
-                <legend>{{ form.selected_option.label }}</legend>
-                <div class="mcq-options">
-                    {% for radio in form.selected_option %}
-                        <label class="mcq-option" for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>
-                    {% endfor %}
+            {% if question.kind == 'cloze' %}
+                <div class="form-field cloze-answer{% if form.answer.errors %} has-error{% endif %}">
+                    <label for="{{ form.answer.id_for_label }}">{{ form.answer.label }}</label>
+                    {{ form.answer }}
+                    {% if form.answer.help_text %}<p class="help-text">{{ form.answer.help_text }}</p>{% endif %}
+                    {% for error in form.answer.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
                 </div>
-                {% for error in form.selected_option.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
-            </fieldset>
+            {% else %}
+                <fieldset>
+                    <legend>{{ form.selected_option.label }}</legend>
+                    <div class="mcq-options">
+                        {% for radio in form.selected_option %}
+                            <label class="mcq-option" for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>
+                        {% endfor %}
+                    </div>
+                    {% for error in form.selected_option.errors %}<p class="field-error" role="alert">{{ error }}</p>{% endfor %}
+                </fieldset>
+            {% endif %}
             <div class="button-row">
                 <button class="button button--primary" type="submit">Check answer</button>
                 <button class="button button--secondary"

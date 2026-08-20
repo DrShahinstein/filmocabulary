@@ -6,10 +6,11 @@
 <div class="quiz-workspace">
     <header class="section-heading section-heading--with-tools">
         <div>
-            <p class="eyebrow">{% if pool == 'learning' %}Learning Pool{% else %}Collection{% endif %}</p>
+            <p class="eyebrow">{% if practice_label %}{{ practice_label }}{% elif pool == 'learning' %}Learning Pool{% else %}Collection{% endif %}</p>
             <h1>Vocabulary practice</h1>
         </div>
-        <a class="button button--secondary" href="{% if pool == 'learning' %}{% url 'quizzes:learning_pool' %}{% else %}{% url 'quizzes:dashboard' %}{% endif %}">Finish</a>
+        <a class="button button--secondary"
+           href="{% if finish_url %}{{ finish_url }}{% elif pool == 'learning' %}{% url 'quizzes:learning_pool' %}{% else %}{% url 'quizzes:dashboard' %}{% endif %}">{{ finish_label|default:"Finish" }}</a>
     </header>
     <div id="quiz-region" aria-live="polite">
         {% include "partials/mcq_question.html" %}
