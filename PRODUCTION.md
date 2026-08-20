@@ -31,7 +31,7 @@ chmod +x scripts/home
 ```
 
 The final command prints a private Django secret. Keep it for the next step.
-Skip the copy command when an existing `.env` must be preserved.
+Skip the copy command if an existing `.env` must be preserved.
 
 ## 2. Configure `.env`
 
@@ -46,9 +46,9 @@ SIGNUP_ENABLED=False
 RATELIMIT_ENABLE=True
 ```
 
-Then configure the `LLM_*` variables. Configure `OPENSUBTITLES_*` too if
-automatic subtitle retrieval is wanted. `.env.example` documents every option
-and includes provider examples.
+Configure the `LLM_*` variables next. Configure `OPENSUBTITLES_*` too if you
+want automatic subtitle retrieval. `.env.example` documents every option and
+includes provider examples.
 
 Production data uses `db.sqlite3` by default. To store it elsewhere, set
 `SQLITE_DATABASE_PATH` to an absolute path whose parent directory exists.
@@ -75,24 +75,31 @@ Open <http://127.0.0.1:8000/> and sign in with the account just created.
 `start` safely runs migrations, static-file collection, and configuration checks
 again, so it is also the normal command after updating Filmocabulary.
 
-## Let other trusted devices connect
+## Let other trusted devices connect (LAN)
 
-Give the server computer a stable LAN address, then change `.env`:
+Find the server machine's IPv4 address (`ipconfig.exe` on Windows or `ip addr`
+on Linux). For example, it might be `192.168.1.50`.
+
+Then edit `.env`:
 
 ```dotenv
 ALLOWED_HOSTS=localhost,127.0.0.1,192.168.1.50
 HOME_BIND=0.0.0.0:8000
 ```
 
-Restart the server and open `http://192.168.1.50:8000/` from another device.
+Restart the server and open `http://192.168.1.50:8000/` from another trusted
+device.
 Allow port 8000 only on the private network in the server firewall. Do not add
 router port forwarding.
 
 ## Accounts
 
-Home production keeps public signup closed by default. Create household users
-through `/admin/`, or temporarily set `SIGNUP_ENABLED=True`, restart, create the
-accounts, and set it back to `False`.
+Home production keeps public signup closed by default.
+
+The `createsuperuser` command in step 3 creates an administrator. While the
+server is running, use `/admin/` to create and manage regular household users.
+Alternatively, temporarily set `SIGNUP_ENABLED=True`, restart the server, let
+the users register, and set it back to `False`.
 
 ## Backups
 
