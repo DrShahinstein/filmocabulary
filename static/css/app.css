@@ -2475,10 +2475,33 @@ textarea::placeholder {
     }
 
     .learning-actions,
-    .learning-card__header,
-    .quiz-question__toolbar {
+    .learning-card__header {
         align-items: flex-start;
         flex-direction: column;
+    }
+
+    .quiz-question__toolbar {
+        align-items: center;
+    }
+
+    .quiz-question__toolbar .quiz-question__meta {
+        min-width: 0;
+        flex: 1;
+    }
+
+    .quiz-question__toolbar .bookmark-button,
+    .quiz-question__bookmark .bookmark-button {
+        width: 34px;
+        height: 34px;
+        min-height: 34px;
+        flex-basis: 34px;
+        justify-content: center;
+        padding: 0;
+    }
+
+    .quiz-question__toolbar .bookmark-button span,
+    .quiz-question__bookmark .bookmark-button span {
+        display: none;
     }
 
     .practice-filter {
