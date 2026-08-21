@@ -2606,8 +2606,25 @@ textarea::placeholder {
     }
 
     .section-heading--with-tools {
+        position: relative;
+        isolation: isolate;
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .section-heading--with-tools::before {
+        position: absolute;
+        z-index: -1;
+        top: -24px;
+        bottom: -16px;
+        left: 50%;
+        width: 100vw;
+        border-bottom: 1px solid rgb(23 74 67 / 8%);
+        background-color: var(--canvas-strong);
+        background-image: repeating-linear-gradient(90deg, transparent 0 30px, rgb(23 74 67 / 3%) 30px 31px);
+        content: "";
+        transform: translateX(-50%);
+        pointer-events: none;
     }
 
     .search-control {
