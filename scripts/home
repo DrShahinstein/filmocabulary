@@ -19,6 +19,160 @@ prepare() {
     "$PYTHON" manage.py check
 }
 
+SERVICE_LABEL="filmocabulary-home-server"
+LOG_DIR="$PROJECT_DIR/logs"
+
+os_kind() {
+    case "$(uname -s)" in
+        Linux)  echo linux ;;
+        Darwin) echo macos ;;
+        *)      echo unsupported ;;
+    esac
+}
+
+# --- Linux: systemd --user unit --------------------------------------------
+
+systemd_unit_path() {
+    echo "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${SERVICE_LABEL}.service"
+}
+
+service_install_linux() {
+    local unit_path
+    unit_path="$(systemd_unit_path)"
+    mkdir -p "$(dirname "$unit_path")"
+
+    cat > "$unit_path" <<EOF
+[Unit]
+Description=Filmocabulary Home server
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$PROJECT_DIR
+ExecStart=$PROJECT_DIR/scripts/home start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now "${SERVICE_LABEL}.service"
+
+    echo "Installed and started as a systemd --user service."
+    echo "Runs whenever you're logged in. To also run before login, run once (may need sudo):"
+    echo "  loginctl enable-linger \"\$USER\""
+}
+
+service_uninstall_linux() {
+    systemctl --user disable --now "${SERVICE_LABEL}.service" 2>/dev/null || true
+    rm -f "$(systemd_unit_path)"
+    systemctl --user daemon-reload
+    echo "Service removed."
+}
+
+service_control_linux() {
+    systemctl --user "$1" "${SERVICE_LABEL}.service"
+}
+
+service_logs_linux() {
+    exec journalctl --user -u "${SERVICE_LABEL}.service" -f
+}
+
+# --- macOS: launchd LaunchAgent ---------------------------------------------
+
+launchd_label()      { echo "com.filmocabulary.home"; }
+launchd_plist_path() { echo "$HOME/Library/LaunchAgents/$(launchd_label).plist"; }
+
+service_install_macos() {
+    local plist_path
+    plist_path="$(launchd_plist_path)"
+    mkdir -p "$(dirname "$plist_path")" "$LOG_DIR"
+
+    cat > "$plist_path" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$(launchd_label)</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$PROJECT_DIR/scripts/home</string>
+        <string>start</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$PROJECT_DIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/home.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/home.err.log</string>
+</dict>
+</plist>
+EOF
+
+    launchctl load -w "$plist_path"
+
+    echo "Installed and started as a launchd agent. Runs on login; restarts on crash."
+    echo "Logs: $LOG_DIR/home.out.log and $LOG_DIR/home.err.log"
+}
+
+service_uninstall_macos() {
+    local plist_path
+    plist_path="$(launchd_plist_path)"
+    launchctl unload -w "$plist_path" 2>/dev/null || true
+    rm -f "$plist_path"
+    echo "Service removed."
+}
+
+service_control_macos() {
+    local plist_path
+    plist_path="$(launchd_plist_path)"
+
+    case "$1" in
+        start)   launchctl load -w "$plist_path" ;;
+        stop)    launchctl unload "$plist_path" ;;
+        restart) launchctl kickstart -k "gui/$(id -u)/$(launchd_label)" ;;
+        status)  launchctl list | grep "$(launchd_label)" || echo "Not running." ;;
+    esac
+}
+
+service_logs_macos() {
+    exec tail -f "$LOG_DIR/home.out.log" "$LOG_DIR/home.err.log"
+}
+
+# --- dispatch ----------------------------------------------------------------
+
+service_command() {
+    local kind action
+    kind="$(os_kind)"
+    action="${1:-status}"
+
+    if [[ "$kind" == "unsupported" ]]; then
+        echo "scripts/home service is only supported on Linux and macOS. Use scripts\\home.ps1 service on Windows." >&2
+        exit 1
+    fi
+
+    case "$action" in
+        install)                          "service_install_$kind" ;;
+        uninstall)                        "service_uninstall_$kind" ;;
+        start | stop | restart | status)  "service_control_$kind" "$action" ;;
+        logs)                             "service_logs_$kind" ;;
+        *)
+            echo "Usage: scripts/home service {install|uninstall|start|stop|restart|status|logs}" >&2
+            exit 2
+            ;;
+    esac
+}
+
 command="${1:-start}"
 case "$command" in
     start)
@@ -40,8 +194,12 @@ case "$command" in
         shift
         exec "$PYTHON" manage.py "$@"
         ;;
+    service)
+        shift
+        service_command "$@"
+        ;;
     *)
-        echo "Usage: scripts/home {start|prepare|backup|manage [django arguments]}" >&2
+        echo "Usage: scripts/home {start|prepare|backup|manage|service} [arguments]" >&2
         exit 2
         ;;
 esac

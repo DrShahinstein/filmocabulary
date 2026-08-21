@@ -21,7 +21,7 @@ python -m pip install -r requirements-production.txt
 python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
-### Linux or macOS
+### Linux or MacOS
 
 ```bash
 source .venv/bin/activate
@@ -47,7 +47,7 @@ RATELIMIT_ENABLE=True
 Production data uses `db.sqlite3` by default. To store it elsewhere, set
 `SQLITE_DATABASE_PATH` to an absolute path whose parent directory exists.
 
-## 3. Prepare, create an account, and start
+## 3. Prepare, create admin, and start
 
 ### Windows
 ```powershell
@@ -56,7 +56,7 @@ scripts\home.ps1 manage createsuperuser
 scripts\home.ps1 start
 ```
 
-### Linux or macOS
+### Linux or MacOS
 
 ```bash
 scripts/home prepare
@@ -123,6 +123,53 @@ To restore, stop the server, preserve the current database, copy the selected
 backup to `db.sqlite3` (or `SQLITE_DATABASE_PATH`), run `prepare`, and start
 again. Do not directly copy the live database while the server is writing.
 
+## Background Service
+
+Install it as a native background service.
+
+### Linux (systemd, no root required)
+
+```bash
+scripts/home service install     # creates a systemd --user unit and starts it
+scripts/home service status
+scripts/home service logs        # journalctl --user, Ctrl+C to stop watching
+scripts/home service restart
+scripts/home service stop
+scripts/home service uninstall
+```
+
+The service runs while you're logged in. To also have it start before login
+(e.g. on a headless box), run once: `loginctl enable-linger "$USER"` (this
+step may need sudo depending on your distro's policy).
+
+### macOS (launchd)
+
+```bash
+scripts/home service install     # creates a LaunchAgent and starts it
+scripts/home service status
+scripts/home service logs        # tails logs/home.out.log and home.err.log
+scripts/home service restart
+scripts/home service stop
+scripts/home service uninstall
+```
+
+The agent runs at login and restarts automatically if the process exits with
+an error.
+
+### Windows (scheduled task)
+
+```powershell
+scripts\home.ps1 service install     # registers a Scheduled Task, runs at logon
+scripts\home.ps1 service status
+scripts\home.ps1 service logs        # tails logs\home.log
+scripts\home.ps1 service restart
+scripts\home.ps1 service stop
+scripts\home.ps1 service uninstall
+```
+
+The task runs only while you're logged on (no stored password, no admin
+rights needed) and restarts automatically up to 3 times on failure.
+
 ## Optional private HTTPS or remote access
 
 Prefer Tailscale or another private overlay network. When a trusted reverse
@@ -147,5 +194,6 @@ Leave it `False` for direct HTTP connections.
 | `prepare` | Migrate, collect static files, and check configuration |
 | `backup [destination]` | Create a consistent SQLite snapshot |
 | `manage <command>` | Run a Django management command |
+| `service <action>` | Install/control a native background service (`install`, `uninstall`, `start`, `stop`, `restart`, `status`, `logs`) |
 
 Use `scripts\home.ps1` on Windows and `scripts/home` on Linux or macOS.
