@@ -32,6 +32,7 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
                 "LLM_TEMPERATURE",
                 "LLM_REASONING_EFFORT",
                 "LLM_MAX_TOKENS_PARAMETER",
+                "LLM_EDITORIAL_REVIEW",
             }.issubset(documented_names)
         )
         self.assertTrue(
@@ -48,6 +49,7 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
             "LLM_BASE_URL",
             "LLM_TIMEOUT_SECONDS",
             "LLM_MAX_TOKENS_PARAMETER",
+            "LLM_EDITORIAL_REVIEW",
         }
         self.assertTrue(required_assignments.issubset(active_assignments))
         self.assertFalse(
@@ -59,6 +61,7 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
             "Required LLM example assignments must be non-empty.",
         )
         self.assertEqual(active_assignments["LLM_MODEL"], "gpt-4.1-mini")
+        self.assertEqual(active_assignments["LLM_EDITORIAL_REVIEW"], "true")
         self.assertEqual(
             active_assignments["LLM_BASE_URL"],
             "https://api.openai.com/v1",

@@ -148,6 +148,8 @@ class _RequestedCandidates:
     returned_count: int
     schema_rejections: CandidateSchemaRejections
     trimmed_count: int = 0
+    editorial_filtered_count: int = 0
+    extraction_returned_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +165,8 @@ class VocabularyPromptBenchmarkResult:
     cloze_ineligibility: ClozeIneligibility
     over_limit_count: int = 0
     release_year: int | None = None
+    editorial_filtered_count: int = 0
+    extraction_returned_count: int | None = None
 
     @property
     def accepted_count(self) -> int:
@@ -175,6 +179,7 @@ class VocabularyPromptBenchmarkResult:
             + self.rejections.ungrounded
             + self.schema_rejections.total
             + self.over_limit_count
+            + self.editorial_filtered_count
         )
 
 
@@ -506,6 +511,8 @@ def _request_candidates_for_reference(
             items=parsed.items,
             returned_count=parsed.returned_count,
             schema_rejections=parsed.schema_rejections,
+            editorial_filtered_count=parsed.editorial_filtered_count,
+            extraction_returned_count=parsed.extraction_returned_count,
         )
     else:
         try:
@@ -545,6 +552,8 @@ def _request_candidates_for_reference(
             returned_count=requested.returned_count,
             schema_rejections=requested.schema_rejections,
             trimmed_count=requested.trimmed_count + trimmed_count,
+            editorial_filtered_count=requested.editorial_filtered_count,
+            extraction_returned_count=requested.extraction_returned_count,
         )
 
     return requested
@@ -703,6 +712,8 @@ def benchmark_vocabulary_prompt(
             cloze_ineligibility=cloze_ineligibility,
             over_limit_count=requested.trimmed_count,
             release_year=release_year,
+            editorial_filtered_count=requested.editorial_filtered_count,
+            extraction_returned_count=requested.extraction_returned_count,
         )
     finally:
         provider.close()

@@ -64,6 +64,8 @@ def benchmark_result(
         schema_rejections=CandidateSchemaRejections(invalid_type=1),
         cloze_ineligibility=ClozeIneligibility(),
         release_year=release_year,
+        editorial_filtered_count=1,
+        extraction_returned_count=4,
     )
 
 
@@ -232,7 +234,7 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         )
 
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["schema_version"], 3)
         self.assertEqual(payload["movie_title"], "Inception")
         self.assertIsNone(payload["release_year"])
         self.assertEqual(payload["candidate_limit"], 50)
@@ -240,7 +242,9 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         self.assertEqual(payload["source"]["origin"], "model_knowledge")
         self.assertEqual(payload["source"]["status"], "not_configured")
         self.assertEqual(payload["counts"]["accepted"], 1)
-        self.assertEqual(payload["counts"]["rejected"], 2)
+        self.assertEqual(payload["counts"]["extraction_returned"], 4)
+        self.assertEqual(payload["counts"]["rejected"], 3)
+        self.assertEqual(payload["rejections"]["editorial_filtered"], 1)
         self.assertEqual(payload["rejections"]["duplicate"], 1)
         self.assertEqual(payload["rejections"]["malformed"], 1)
         self.assertEqual(payload["rejections"]["schema"]["invalid_type"], 1)
@@ -272,7 +276,7 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
             payload = json.loads(destination.read_text(encoding="utf-8"))
 
         self.assertEqual(payload["candidate_limit"], 10)
-        self.assertIn("1 accepted, 2 rejected", stdout.getvalue())
+        self.assertIn("1 accepted, 3 rejected", stdout.getvalue())
         self.assertIn("v1.json", stdout.getvalue())
         self.assertNotIn('"items"', stdout.getvalue())
 
@@ -316,7 +320,7 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
 
         self.assertIsInstance(payload, list)
         self.assertEqual(payload[0]["word_or_phrase"], "scrutinize")
-        self.assertIn("1 accepted, 2 rejected", stdout.getvalue())
+        self.assertIn("1 accepted, 3 rejected", stdout.getvalue())
 
     @patch("vocabulary.management.commands.benchmark_prompt.acquire_automatic_source")
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")

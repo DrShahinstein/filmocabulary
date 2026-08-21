@@ -21,6 +21,7 @@ from vocabulary.services import (
     VocabularyProviderError,
     VocabularyResponseError,
     _candidate_limit,
+    benchmark_vocabulary_prompt,
     generate_and_save_vocabulary,
 )
 
@@ -31,6 +32,7 @@ from .factories import vocabulary_payload
     LLM_MODEL="test-structured-model",
     LLM_REASONING_EFFORT="none",
     LLM_MAX_TOKENS_PARAMETER="max_tokens",
+    LLM_EDITORIAL_REVIEW=False,
 )
 class VocabularyGenerationServiceTests(TestCase):
     @classmethod
@@ -179,19 +181,19 @@ class VocabularyGenerationServiceTests(TestCase):
         self.assertEqual(request_kwargs["reasoning_effort"], "none")
         self.assertNotIn("extra_body", request_kwargs)
         self.assertIn(
-            '"stolen house" -> REJECT',
+            "cross-context usefulness",
             request_kwargs["messages"][0]["content"],
         )
         self.assertIn(
-            "NEVER invent, paraphrase",
+            "same lexeme as the source occurrence",
             request_kwargs["messages"][0]["content"],
         )
         self.assertIn(
-            "never use B1 as array padding",
+            "only exceptional high-utility B1 items",
             request_kwargs["messages"][1]["content"],
         )
         self.assertIn(
-            "Return at most candidate_limit",
+            "quality determines the final count",
             request_kwargs["messages"][1]["content"],
         )
         self.assertIn(
@@ -237,6 +239,84 @@ class VocabularyGenerationServiceTests(TestCase):
 
         request_kwargs = client.chat.completions.create.call_args.kwargs
         self.assertEqual(request_kwargs["max_tokens"], 6_272)
+
+    @override_settings(LLM_EDITORIAL_REVIEW=True)
+    def test_editorial_review_filters_inflected_verb_headwords(self):
+        initial_payload = vocabulary_payload(item_count=2)
+        reviewed_payload = vocabulary_payload(item_count=2)
+        reviewed_payload["items"][1].update(
+            {
+                "word_or_phrase": "scrambling",
+                "definition_en": "Moving quickly in a disorganized way.",
+                "example_sentence": "The staff were scrambling to finish the work.",
+            }
+        )
+        client = self.llm_client_with_payload(initial_payload)
+        initial_response = client.chat.completions.create.return_value
+        reviewed_response = SimpleNamespace(
+            usage=initial_response.usage,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content=json.dumps(reviewed_payload)),
+                )
+            ],
+        )
+        client.chat.completions.create.side_effect = [
+            initial_response,
+            reviewed_response,
+        ]
+
+        result = generate_and_save_vocabulary(
+            user=self.user,
+            title="Zodiac",
+            release_year=2007,
+            item_count=2,
+            client=client,
+        )
+
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        review_request = client.chat.completions.create.call_args_list[1].kwargs
+        self.assertIn(
+            "final editor of an ESL vocabulary deck",
+            review_request["messages"][0]["content"],
+        )
+        self.assertEqual(result.created_count, 1)
+        self.assertFalse(
+            VocabularyItem.objects.filter(word_or_phrase="scrambling").exists()
+        )
+
+    @override_settings(LLM_EDITORIAL_REVIEW=True)
+    def test_benchmark_reports_editorial_filtering_separately(self):
+        initial_payload = vocabulary_payload(item_count=3)
+        reviewed_payload = vocabulary_payload(item_count=2)
+        client = self.llm_client_with_payload(initial_payload)
+        initial_response = client.chat.completions.create.return_value
+        reviewed_response = SimpleNamespace(
+            usage=initial_response.usage,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content=json.dumps(reviewed_payload)),
+                )
+            ],
+        )
+        client.chat.completions.create.side_effect = [
+            initial_response,
+            reviewed_response,
+        ]
+
+        result = benchmark_vocabulary_prompt(
+            movie_title="Zodiac",
+            candidate_limit=3,
+            client=client,
+        )
+
+        self.assertEqual(result.extraction_returned_count, 3)
+        self.assertEqual(result.provider_returned_count, 2)
+        self.assertEqual(result.editorial_filtered_count, 1)
+        self.assertEqual(result.accepted_count, 2)
+        self.assertEqual(result.rejected_count, 1)
 
     def test_generic_client_logs_usage_without_response_content(self):
         client = self.llm_client_with_payload(vocabulary_payload(item_count=8))

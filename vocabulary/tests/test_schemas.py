@@ -106,32 +106,18 @@ class VocabularyResponseSchemaTests(SimpleTestCase):
             VocabularyExtractionResponse.model_validate(payload)
 
     def test_prompt_contains_required_guardrails(self):
-        self.assertIn("Primary Target (B2-C2)", SYSTEM_PROMPT)
-        self.assertIn("expressive verbs, nuanced adjectives", SYSTEM_PROMPT)
-        self.assertIn("Secondary Selection (B1)", SYSTEM_PROMPT)
-        self.assertIn("Never add B1 merely to reach candidate_limit", SYSTEM_PROMPT)
-        self.assertIn("Quality outranks count.", SYSTEM_PROMPT)
-        self.assertIn("Returning fewer than candidate_limit is correct", SYSTEM_PROMPT)
-        self.assertIn("NO Plot-Driven / Compositional Phrases", SYSTEM_PROMPT)
-        self.assertIn('"stolen house" -> REJECT', SYSTEM_PROMPT)
-        self.assertIn('"mental projection" -> REJECT', SYSTEM_PROMPT)
-        self.assertIn('family/relative terms ("brother-in-law")', SYSTEM_PROMPT)
-        self.assertIn('civil statuses ("divorced")', SYSTEM_PROMPT)
-        self.assertIn('everyday descriptors ("beloved", "nice")', SYSTEM_PROMPT)
-        self.assertIn(
-            "recognized dictionary entry, fixed phrasal verb, or established idiom",
-            SYSTEM_PROMPT,
-        )
-        self.assertIn(
-            "Any arbitrary adjacent words or literal descriptions",
-            SYSTEM_PROMPT,
-        )
-        self.assertIn("canonical form", SYSTEM_PROMPT)
-        self.assertIn("appears exactly or as a clear inflection", SYSTEM_PROMPT)
-        self.assertIn("NEVER invent, paraphrase", SYSTEM_PROMPT)
-        self.assertIn("exactly one natural exact or inflected use", SYSTEM_PROMPT)
-        self.assertIn("zero plot spoilers", SYSTEM_PROMPT)
-        self.assertIn("Strict JSON output matching the required schema", SYSTEM_PROMPT)
+        self.assertIn("cross-context usefulness", SYSTEM_PROMPT)
+        self.assertIn("genuine B2-C2", SYSTEM_PROMPT)
+        self.assertIn("B1 item only when it is unusually", SYSTEM_PROMPT)
+        self.assertIn("same lexeme as the source occurrence", SYSTEM_PROMPT)
+        self.assertIn("uninflected base form", SYSTEM_PROMPT)
+        self.assertIn("SMALLEST VALUABLE UNIT", SYSTEM_PROMPT)
+        self.assertIn("Apply the `collocation` label conservatively", SYSTEM_PROMPT)
+        self.assertIn("ASSIGN CEFR INDEPENDENTLY", SYSTEM_PROMPT)
+        self.assertIn("Reserve C2 for the small", SYSTEM_PROMPT)
+        self.assertIn("candidate_limit` is a maximum, not a", SYSTEM_PROMPT)
+        self.assertNotIn('"stolen house"', SYSTEM_PROMPT)
+        self.assertNotIn('"mental projection"', SYSTEM_PROMPT)
 
     def test_provider_schema_uses_aliases_and_forbids_extra_properties(self):
         response_schema = VocabularyExtractionResponse.model_json_schema(by_alias=True)

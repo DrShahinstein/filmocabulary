@@ -12,6 +12,13 @@ class SourceTermMatchingTests(SimpleTestCase):
             )
         )
 
+    def test_matches_irregular_shrink_forms(self):
+        self.assertTrue(source_contains_term("The sweater shrank.", "shrink"))
+        self.assertTrue(source_contains_term("The fabric has shrunk.", "shrink"))
+
+    def test_matches_guerrilla_spelling_variant(self):
+        self.assertTrue(source_contains_term("They used guerrilla tactics.", "guerilla"))
+
     def test_matches_plural_to_singular(self):
         self.assertTrue(source_contains_term("Pack the utensils.", "utensil"))
 

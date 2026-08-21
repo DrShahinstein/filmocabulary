@@ -87,10 +87,16 @@ filter presets.
 
 ## Generation Behavior
 
-Generation is deliberately single-shot. For a request of `N` saved entries, the service
-adds `ceil(N × 20%)` candidates, bounded between 3 and 15, then validates and
-source-checks the response and saves the first `N` usable results. If fewer candidates pass
-validation, the valid subset is saved without a second LLM request.
+Generation uses two structured stages by default. For a request of `N` saved entries,
+the service first adds `ceil(N × 20%)` extraction candidates, bounded between 3 and 15.
+An editorial LLM pass then normalizes headwords, recalibrates CEFR levels, and removes
+low-value or overly specialized proposals. Its ceiling is 85% of the extraction limit,
+which consumes the validation surplus while preserving approximately the requested
+application count. Set `LLM_EDITORIAL_REVIEW=false` to use extraction only.
+
+The final reviewed candidates are schema-validated, source-checked, and saved up to the
+requested `N`. If fewer candidates pass, the valid subset is saved without a refill
+request.
 
 Malformed candidates are validated independently, so one bad item does not discard valid
 siblings. Cloze blanks are derived when an example contains one exact or inflected use of
@@ -118,9 +124,9 @@ intact. A versioned negative cache also avoids repeating subtitle work when no s
 advanced source text is found.
 
 The generic LLM client applies the same completion allowance to every compatible provider
-(`512 + 160` tokens per requested candidate). Reasoning remains disabled when
-`LLM_REASONING_EFFORT=none` is configured. Usage logs record prompt, completion, total,
-and candidate-yield counts without logging subtitle or response content.
+(`512 + 160` tokens per requested candidate) in each enabled stage. Reasoning remains
+disabled when `LLM_REASONING_EFFORT=none` is configured. Usage logs identify extraction
+and review token counts separately without logging subtitle or response content.
 
 Together, these measures reduce repeated downloads and unnecessary input and output tokens.
 Actual usage still varies by movie, provider, requested entry count, and cache availability,
@@ -143,11 +149,13 @@ compare generated vocabulary while refining prompts.
 
 ```bash
 python manage.py benchmark_prompt --help
-python manage.py benchmark_prompt -m "The Matrix" -y 1999 -l 100 --words-only -o ../the_matrix_1999.json 
+python manage.py benchmark_prompt -m "The Matrix" -y 1999 -l 100 --words-only -o ../the_matrix_1999.json
 ```
 
 Without `--output`, the command pretty-prints the artifact to the console. With an output
 path, it atomically creates or replaces that JSON file and prints only a short summary.
+Full artifacts report extraction yield, reviewed yield, and editorial filtering
+separately, so prompt iterations remain comparable when the review stage removes cards.
 
 Without `--source-file`, the command attempts the configured OpenSubtitles acquisition
 path, pre-filters the downloaded English subtitles entirely in memory, and reports the

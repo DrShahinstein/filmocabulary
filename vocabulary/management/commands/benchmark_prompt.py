@@ -19,7 +19,7 @@ from vocabulary.ingestion import (
     SourceIngestionError,
     parse_local_source,
 )
-from vocabulary.providers import SYSTEM_PROMPT
+from vocabulary.providers import PROMPT_FINGERPRINT_MATERIAL
 from vocabulary.services import (
     VocabularyGenerationError,
     VocabularyPromptBenchmarkResult,
@@ -103,7 +103,7 @@ def _benchmark_payload(
         item.blank_sentence is not None for item in result.items
     )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "movie_title": result.movie_title,
         "release_year": result.release_year,
         "candidate_limit": result.candidate_limit,
@@ -111,11 +111,12 @@ def _benchmark_payload(
             "provider": result.provider_name,
             "model": settings.LLM_MODEL,
             "system_prompt_sha256": hashlib.sha256(
-                SYSTEM_PROMPT.encode("utf-8")
+                PROMPT_FINGERPRINT_MATERIAL.encode("utf-8")
             ).hexdigest(),
         },
         "source": source,
         "counts": {
+            "extraction_returned": result.extraction_returned_count,
             "provider_returned": result.provider_returned_count,
             "schema_valid": result.schema_valid_count,
             "accepted": result.accepted_count,
@@ -124,6 +125,7 @@ def _benchmark_payload(
             "cloze_ineligible": result.cloze_ineligibility.total,
         },
         "rejections": {
+            "editorial_filtered": result.editorial_filtered_count,
             "duplicate": result.rejections.duplicate,
             "ungrounded": result.rejections.ungrounded,
             "malformed": result.rejections.malformed,
