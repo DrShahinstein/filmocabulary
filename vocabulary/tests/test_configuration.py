@@ -61,7 +61,7 @@ class LLMConfigurationDocumentationTests(SimpleTestCase):
             "Required LLM example assignments must be non-empty.",
         )
         self.assertEqual(active_assignments["LLM_MODEL"], "gpt-4.1-mini")
-        self.assertEqual(active_assignments["LLM_EDITORIAL_REVIEW"], "true")
+        self.assertEqual(active_assignments["LLM_EDITORIAL_REVIEW"], "False")
         self.assertEqual(
             active_assignments["LLM_BASE_URL"],
             "https://api.openai.com/v1",

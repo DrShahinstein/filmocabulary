@@ -87,50 +87,46 @@ filter presets.
 
 ## Generation Behavior
 
-Generation uses two structured stages by default. For a request of `N` saved entries,
-the service first adds `ceil(N × 20%)` extraction candidates, bounded between 3 and 15.
-An editorial LLM pass then normalizes headwords, recalibrates CEFR levels, and removes
-low-value or overly specialized proposals. Its ceiling is 85% of the extraction limit,
-which consumes the validation surplus while preserving approximately the requested
-application count. Set `LLM_EDITORIAL_REVIEW=false` to use extraction only.
+Filmocabulary normally makes one structured LLM request. It asks for a few extra
+candidates so weak, duplicated, or invalid entries can be removed without affecting the
+rest of the batch. Only vocabulary that passes validation is saved. If fewer words qualify
+than requested, the good results are kept and the system does not make a refill request.
 
-The final reviewed candidates are schema-validated, source-checked, and saved up to the
-requested `N`. If fewer candidates pass, the valid subset is saved without a refill
-request.
+<br/>
 
-Malformed candidates are validated independently, so one bad item does not discard valid
-siblings. Cloze blanks are derived when an example contains one exact or inflected use of
-the term, but cloze eligibility is optional and never prevents a grounded item from being
-used in the definition-based quiz. Candidate-yield logs separate schema, grounding,
-duplicate, and cloze-ineligibility diagnostics without recording generated content.
+### Optional Editorial Review
 
-### Token Strategy
+Editorial review makes a second LLM request to inspect the first result. It can clean up
+headwords, improve CEFR ratings, and remove vocabulary that is too ordinary, too
+specialized, or not broadly useful.
 
-The largest avoidable input cost is normally the full subtitle file. Filmocabulary reduces
-that cost before generation:
+It can provide a better final deck, especially when the first extraction is noisy, but it
+is not required for vocabulary generation to work well. Think of it as an optional quality
+control rather than a necessary step.
 
-1. It checks the current user's movie cache before calling OpenSubtitles.
-2. It parses subtitles into complete dialogue units, preserving sentence context.
-3. It keeps units containing locally recognized B1-C2 terms and prioritizes higher
-   levels within a request-sized budget. The default character envelope scales from
-   roughly `4,000` for very small requests to `6,000` at 30 items, `8,000` at 50,
-   and `14,000` at 100.
-4. It caches a filtered large-request envelope on the movie, then derives the smaller
-   request-sized source from that cache without reintroducing raw or A1-A2 dialogue.
+A 100-word generation commonly uses around `12,000-15,000` tokens without editorial
+review. When review is enabled, allow roughly `25,000-30,000` tokens for the same job.
+Actual usage varies by movie, model, subtitle source, and the number of cards retained.
 
-The filter removes timestamps and elementary-only dialogue without stripping individual
-words from retained sentences, so phrasal verbs, idioms, and surrounding context remain
-intact. A versioned negative cache also avoids repeating subtitle work when no suitable
-advanced source text is found.
+Enable it when the extra quality is worth the additional tokens:
 
-The generic LLM client applies the same completion allowance to every compatible provider
-(`512 + 160` tokens per requested candidate) in each enabled stage. Reasoning remains
-disabled when `LLM_REASONING_EFFORT=none` is configured. Usage logs identify extraction
-and review token counts separately without logging subtitle or response content.
+```env
+LLM_EDITORIAL_REVIEW=True
+```
 
-Together, these measures reduce repeated downloads and unnecessary input and output tokens.
-Actual usage still varies by movie, provider, requested entry count, and cache availability,
-so the application does not promise a fixed token count or percentage reduction.
+<br/>
+
+### Subtitle Preparation
+
+When subtitles are available, Filmocabulary cleans and shortens them before sending them
+to the model. It removes timestamps and low-value dialogue while keeping complete
+sentences, phrasal verbs, idioms, and useful context. The filtered source is cached so it
+does not need to be downloaded and prepared again for every request.
+
+Each generated card is checked independently. One bad card does not discard the others,
+and an item can still be used in definition quizzes even when a safe cloze sentence cannot
+be created for it. Usage logs record counts and token usage without recording subtitle or
+generated vocabulary content.
 
 ## Tests
 
