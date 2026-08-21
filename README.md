@@ -134,9 +134,12 @@ python manage.py check
 python manage.py makemigrations --check --dry-run
 ```
 
-### Prompt Benchmarking
+## Prompt Benchmarking
 
-The vocabulary generation pipeline is exactly the same. Runs as memory-only and it is independent of the SQLite database. This allows you to monitor and test the generated words.
+The benchmark command uses the same vocabulary extraction, Python pre-filtering,
+grounding, and validation pipeline as the application, while running entirely in
+memory and independently of the SQLite database. This makes it easy to inspect and
+compare generated vocabulary while refining prompts.
 
 ```bash
 python manage.py benchmark_prompt --help
