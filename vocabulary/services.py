@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from pydantic import ValidationError as PydanticValidationError
 
-from movies.models import Movie
+from movies.models import Movie, current_year
 
 from .constants import (
     GENERATION_CANDIDATE_SURPLUS_RATIO,
@@ -162,6 +162,7 @@ class VocabularyPromptBenchmarkResult:
     schema_rejections: CandidateSchemaRejections
     cloze_ineligibility: ClozeIneligibility
     over_limit_count: int = 0
+    release_year: int | None = None
 
     @property
     def accepted_count(self) -> int:
@@ -636,6 +637,7 @@ def _accept_candidates(
 def benchmark_vocabulary_prompt(
     *,
     movie_title: str,
+    release_year: int | None = None,
     candidate_limit: int = 50,
     client: Any | None = None,
     source: SourceDocument | None = None,
@@ -646,6 +648,15 @@ def benchmark_vocabulary_prompt(
     cleaned_title = " ".join(movie_title.split())
     if not cleaned_title or len(cleaned_title) > 255:
         raise ValueError("A movie title between 1 and 255 characters is required.")
+    max_release_year = current_year()
+    if release_year is not None and (
+        not isinstance(release_year, int)
+        or isinstance(release_year, bool)
+        or not 1888 <= release_year <= max_release_year
+    ):
+        raise ValueError(
+            f"release_year must be between 1888 and {max_release_year}."
+        )
     if (
         not isinstance(candidate_limit, int)
         or isinstance(candidate_limit, bool)
@@ -666,7 +677,11 @@ def benchmark_vocabulary_prompt(
     try:
         requested = _request_candidates_for_reference(
             movie_title=cleaned_title,
-            movie_reference=cleaned_title,
+            movie_reference=(
+                f"{cleaned_title} ({release_year})"
+                if release_year is not None
+                else cleaned_title
+            ),
             candidate_limit=candidate_limit,
             provider=provider,
             source=source,
@@ -687,6 +702,7 @@ def benchmark_vocabulary_prompt(
             schema_rejections=requested.schema_rejections,
             cloze_ineligibility=cloze_ineligibility,
             over_limit_count=requested.trimmed_count,
+            release_year=release_year,
         )
     finally:
         provider.close()

@@ -142,21 +142,28 @@ grounding, duplicate checks, and cloze derivation as normal generation, but neve
 movies or vocabulary records.
 
 ```bash
-python manage.py benchmark_prompt --movie "Inception"
-python manage.py benchmark_prompt -m "Inception" -l 50 -o benchmarks/inception_v1.json
-python manage.py benchmark_prompt -m "Inception" -f transcripts/inception.srt -o benchmarks/inception_grounded.json
-python manage.py benchmark_prompt -m "Inception" --items-only -o benchmarks/inception_items.json
+python manage.py benchmark_prompt --movie "Inception" --year 2010
+python manage.py benchmark_prompt -m "Inception" -y 2010 -l 50 -o benchmarks/inception_v1.json
+python manage.py benchmark_prompt -m "Inception" -y 2010 -f transcripts/inception.srt -o benchmarks/inception_grounded.json
+python manage.py benchmark_prompt -m "Inception" -y 2010 --words-only -o benchmarks/inception_words.json
 ```
 
 Without `--output`, the command pretty-prints the artifact to the console. With an output
 path, it atomically creates or replaces that JSON file and prints only a short summary.
 Artifacts contain accepted items, candidate and rejection counts, detailed schema and
 cloze-ineligibility categories, configured model metadata, a system-prompt fingerprint,
-and optional filtered-source metadata. The candidate limit defaults to 50 and accepts
-values from 1 through 115. Local sources must be `.txt` or `.srt`; they are parsed and
-pre-filtered through the production source pipeline before being sent to the model.
-Use `--items-only` to write or print the accepted vocabulary array without the metadata
-wrapper when comparing prompt variants side by side.
+and filtered-source provenance. The optional release year disambiguates remakes and is
+included in the model's movie reference. The candidate limit defaults to 50 and accepts
+values from 1 through 115.
+
+Without `--source-file`, the command attempts the configured OpenSubtitles acquisition
+path, pre-filters the downloaded English subtitles entirely in memory, and reports the
+provider, IMDb ID, subtitle source ID, and source fingerprint. It never reads or writes
+the application's subtitle cache. Acquisition failures are reported before the command
+visibly falls back to model knowledge. Local sources must be `.txt` or `.srt`; they use
+the same filtering pipeline and bypass automatic acquisition. Use `--words-only` to write
+or print the accepted vocabulary array without the metadata wrapper when comparing prompt
+variants side by side; source provenance is still printed to the terminal.
 
 ## Home Production
 

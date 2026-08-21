@@ -22,6 +22,7 @@ from vocabulary.services import (
     VocabularyResponseError,
     benchmark_vocabulary_prompt,
 )
+from vocabulary.source_acquisition import AcquiredSource, SourceNotFoundError
 
 
 def candidate(
@@ -40,7 +41,12 @@ def candidate(
     )
 
 
-def benchmark_result(*, movie_title="Inception", candidate_limit=50):
+def benchmark_result(
+    *,
+    movie_title="Inception",
+    release_year=None,
+    candidate_limit=50,
+):
     item = VocabularyItemResponse.model_validate(
         {
             **candidate().model_dump(mode="json", by_alias=True),
@@ -57,6 +63,7 @@ def benchmark_result(*, movie_title="Inception", candidate_limit=50):
         rejections=CandidateRejections(duplicate=1, malformed=1),
         schema_rejections=CandidateSchemaRejections(invalid_type=1),
         cloze_ineligibility=ClozeIneligibility(),
+        release_year=release_year,
     )
 
 
@@ -99,11 +106,13 @@ class PromptBenchmarkServiceTests(SimpleTestCase):
         ):
             result = benchmark_vocabulary_prompt(
                 movie_title="  Inception  ",
+                release_year=2010,
                 candidate_limit=12,
                 source=source,
             )
 
         self.assertEqual(result.movie_title, "Inception")
+        self.assertEqual(result.release_year, 2010)
         self.assertEqual(result.provider_name, "fake-llm")
         self.assertEqual(result.provider_returned_count, 3)
         self.assertEqual(result.schema_valid_count, 2)
@@ -116,7 +125,7 @@ class PromptBenchmarkServiceTests(SimpleTestCase):
             "The reviewer chose to ___ every detail.",
         )
         self.assertEqual(provider.calls[0]["candidate_limit"], 12)
-        self.assertEqual(provider.calls[0]["movie_reference"], "Inception")
+        self.assertEqual(provider.calls[0]["movie_reference"], "Inception (2010)")
         self.assertIs(provider.calls[0]["source"], source)
         self.assertTrue(provider.closed)
 
@@ -166,8 +175,25 @@ class PromptBenchmarkServiceTests(SimpleTestCase):
 
         self.assertTrue(provider.closed)
 
+    def test_rejects_invalid_release_year_before_building_provider(self):
+        with patch(
+            "vocabulary.services.build_vocabulary_llm_client"
+        ) as build_provider, self.assertRaisesMessage(
+            ValueError,
+            "release_year must be between",
+        ):
+            benchmark_vocabulary_prompt(
+                movie_title="Inception",
+                release_year=1800,
+            )
 
-@override_settings(LLM_MODEL="benchmark-test-model")
+        build_provider.assert_not_called()
+
+
+@override_settings(
+    LLM_MODEL="benchmark-test-model",
+    VOCABULARY_AUTO_SOURCE_PROVIDER="",
+)
 class BenchmarkPromptCommandTests(SimpleTestCase):
     def test_help_shows_only_benchmark_options(self):
         parser = Command().create_parser("manage.py", "benchmark_prompt")
@@ -175,10 +201,12 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         help_text = parser.format_help()
 
         self.assertIn("-m TITLE, --movie TITLE", help_text)
+        self.assertIn("-y YEAR, --year YEAR", help_text)
         self.assertIn("-l COUNT, --limit COUNT", help_text)
         self.assertIn("-o PATH, --output PATH", help_text)
         self.assertIn("-f PATH, --source-file PATH", help_text)
-        self.assertIn("--items-only", help_text)
+        self.assertIn("--words-only", help_text)
+        self.assertNotIn("--items-only", help_text)
         for hidden_option in (
             "--version",
             "--verbosity",
@@ -200,14 +228,17 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
             "benchmark_prompt",
             movie="  Inception  ",
             stdout=stdout,
+            stderr=StringIO(),
         )
 
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
         self.assertEqual(payload["movie_title"], "Inception")
+        self.assertIsNone(payload["release_year"])
         self.assertEqual(payload["candidate_limit"], 50)
         self.assertEqual(payload["prompt"]["model"], "benchmark-test-model")
-        self.assertEqual(payload["source"], None)
+        self.assertEqual(payload["source"]["origin"], "model_knowledge")
+        self.assertEqual(payload["source"]["status"], "not_configured")
         self.assertEqual(payload["counts"]["accepted"], 1)
         self.assertEqual(payload["counts"]["rejected"], 2)
         self.assertEqual(payload["rejections"]["duplicate"], 1)
@@ -216,6 +247,7 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         self.assertEqual(payload["items"][0]["word_or_phrase"], "scrutinize")
         benchmark.assert_called_once_with(
             movie_title="Inception",
+            release_year=None,
             candidate_limit=50,
             source=None,
         )
@@ -235,6 +267,7 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
                 limit=10,
                 output=destination,
                 stdout=stdout,
+                stderr=StringIO(),
             )
             payload = json.loads(destination.read_text(encoding="utf-8"))
 
@@ -244,15 +277,17 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         self.assertNotIn('"items"', stdout.getvalue())
 
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
-    def test_items_only_prints_bare_items_array(self, benchmark):
+    def test_words_only_prints_bare_items_array(self, benchmark):
         benchmark.return_value = benchmark_result()
         stdout = StringIO()
+        stderr = StringIO()
 
         call_command(
             "benchmark_prompt",
             movie="Inception",
-            items_only=True,
+            words_only=True,
             stdout=stdout,
+            stderr=stderr,
         )
 
         payload = json.loads(stdout.getvalue())
@@ -260,9 +295,10 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["word_or_phrase"], "scrutinize")
         self.assertNotIn("schema_version", payload[0])
+        self.assertIn("using model knowledge", stderr.getvalue())
 
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
-    def test_items_only_writes_bare_items_array(self, benchmark):
+    def test_words_only_writes_bare_items_array(self, benchmark):
         benchmark.return_value = benchmark_result()
         stdout = StringIO()
 
@@ -271,9 +307,10 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
             call_command(
                 "benchmark_prompt",
                 movie="Inception",
-                items_only=True,
+                words_only=True,
                 output=destination,
                 stdout=stdout,
+                stderr=StringIO(),
             )
             payload = json.loads(destination.read_text(encoding="utf-8"))
 
@@ -281,9 +318,15 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         self.assertEqual(payload[0]["word_or_phrase"], "scrutinize")
         self.assertIn("1 accepted, 2 rejected", stdout.getvalue())
 
+    @patch("vocabulary.management.commands.benchmark_prompt.acquire_automatic_source")
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
-    def test_parses_and_prefilters_local_source_file(self, benchmark):
+    def test_parses_and_prefilters_local_source_file(
+        self,
+        benchmark,
+        acquire_source,
+    ):
         benchmark.return_value = benchmark_result(candidate_limit=10)
+        stderr = StringIO()
 
         with TemporaryDirectory() as temporary_directory:
             source_path = Path(temporary_directory) / "inception.txt"
@@ -299,6 +342,7 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
                 source_file=source_path,
                 output=destination,
                 stdout=StringIO(),
+                stderr=stderr,
             )
             payload = json.loads(destination.read_text(encoding="utf-8"))
 
@@ -306,10 +350,101 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         self.assertTrue(prepared.pre_filtered)
         self.assertIn("scrutinize", prepared.text)
         self.assertNotIn("Hello there", prepared.text)
+        self.assertEqual(payload["source"]["origin"], "local_file")
+        self.assertEqual(payload["source"]["status"], "used")
         self.assertEqual(payload["source"]["filename"], "inception.txt")
         self.assertEqual(payload["source"]["format"], "script")
         self.assertTrue(payload["source"]["pre_filtered"])
         self.assertEqual(len(payload["source"]["prompt_sha256"]), 64)
+        self.assertIn("pre-filtered in memory", stderr.getvalue())
+        acquire_source.assert_not_called()
+
+    @override_settings(VOCABULARY_AUTO_SOURCE_PROVIDER="opensubtitles")
+    @patch("vocabulary.management.commands.benchmark_prompt.acquire_automatic_source")
+    @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
+    def test_acquires_and_reports_automatic_subtitles(
+        self,
+        benchmark,
+        acquire_source,
+    ):
+        benchmark.return_value = benchmark_result(
+            movie_title="Zodiac",
+            release_year=2007,
+            candidate_limit=10,
+        )
+        acquire_source.return_value = AcquiredSource(
+            document=SourceDocument(
+                text="We must scrutinize every detail before deciding.",
+                format="srt",
+                filename="Zodiac.2007.srt",
+            ),
+            provider="OpenSubtitles",
+            source_id="123",
+            imdb_id="443706",
+        )
+        stderr = StringIO()
+
+        with TemporaryDirectory() as temporary_directory:
+            destination = Path(temporary_directory) / "zodiac.json"
+            call_command(
+                "benchmark_prompt",
+                movie="Zodiac",
+                year=2007,
+                limit=10,
+                output=destination,
+                stdout=StringIO(),
+                stderr=stderr,
+            )
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+
+        acquire_source.assert_called_once_with(
+            title="Zodiac",
+            release_year=2007,
+        )
+        prepared = benchmark.call_args.kwargs["source"]
+        self.assertTrue(prepared.pre_filtered)
+        self.assertIn("scrutinize", prepared.text)
+        self.assertEqual(benchmark.call_args.kwargs["release_year"], 2007)
+        self.assertEqual(payload["release_year"], 2007)
+        self.assertEqual(payload["source"]["origin"], "automatic")
+        self.assertEqual(payload["source"]["status"], "used")
+        self.assertEqual(payload["source"]["provider"], "OpenSubtitles")
+        self.assertEqual(payload["source"]["source_id"], "123")
+        self.assertEqual(payload["source"]["imdb_id"], "443706")
+        self.assertIn("IMDb tt0443706", stderr.getvalue())
+        self.assertIn("pre-filtered in memory", stderr.getvalue())
+        self.assertNotIn("cached", stderr.getvalue().casefold())
+
+    @override_settings(VOCABULARY_AUTO_SOURCE_PROVIDER="opensubtitles")
+    @patch("vocabulary.management.commands.benchmark_prompt.acquire_automatic_source")
+    @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
+    def test_reports_automatic_source_fallback_to_model_knowledge(
+        self,
+        benchmark,
+        acquire_source,
+    ):
+        benchmark.return_value = benchmark_result(release_year=2010)
+        acquire_source.side_effect = SourceNotFoundError(
+            "No matching English subtitles were found automatically."
+        )
+        stdout = StringIO()
+        stderr = StringIO()
+
+        call_command(
+            "benchmark_prompt",
+            movie="Inception",
+            year=2010,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["source"]["origin"], "automatic")
+        self.assertEqual(payload["source"]["status"], "unavailable")
+        self.assertEqual(payload["source"]["provider"], "OpenSubtitles")
+        self.assertIn("Using model knowledge", payload["source"]["note"])
+        self.assertIn("Using model knowledge", stderr.getvalue())
+        self.assertIsNone(benchmark.call_args.kwargs["source"])
 
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
     def test_rejects_invalid_limit_before_calling_provider(self, benchmark):
@@ -320,6 +455,23 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
                 limit=0,
             )
 
+        benchmark.assert_not_called()
+
+    @patch("vocabulary.management.commands.benchmark_prompt.acquire_automatic_source")
+    @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
+    def test_rejects_invalid_year_before_acquiring_source(
+        self,
+        benchmark,
+        acquire_source,
+    ):
+        with self.assertRaisesMessage(CommandError, "--year must be between"):
+            call_command(
+                "benchmark_prompt",
+                movie="Inception",
+                year=1800,
+            )
+
+        acquire_source.assert_not_called()
         benchmark.assert_not_called()
 
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")

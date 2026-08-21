@@ -6,10 +6,19 @@ from dataclasses import asdict
 from pathlib import Path
 
 from django.conf import settings
-from django.core.management.base import BaseCommand, CommandError, DjangoHelpFormatter
+from django.core.management.base import (
+    BaseCommand,
+    CommandError,
+    DjangoHelpFormatter,
+)
 
+from movies.models import current_year
 from vocabulary.constants import MAX_GENERATION_CANDIDATES
-from vocabulary.ingestion import SourceIngestionError, parse_local_source
+from vocabulary.ingestion import (
+    SourceDocument,
+    SourceIngestionError,
+    parse_local_source,
+)
 from vocabulary.providers import SYSTEM_PROMPT
 from vocabulary.services import (
     VocabularyGenerationError,
@@ -17,6 +26,11 @@ from vocabulary.services import (
     benchmark_vocabulary_prompt,
     prepare_benchmark_source,
 )
+from vocabulary.source_acquisition import (
+    SourceAcquisitionError,
+    acquire_automatic_source,
+)
+from vocabulary.subtitle_filter import SubtitleFilterConfigurationError
 
 
 class BenchmarkHelpFormatter(DjangoHelpFormatter):
@@ -25,15 +39,57 @@ class BenchmarkHelpFormatter(DjangoHelpFormatter):
         super().__init__(*args, **kwargs)
 
 
-def _source_metadata(*, original, prepared) -> dict[str, object]:
+def _source_metadata(
+    *,
+    original: SourceDocument,
+    prepared: SourceDocument,
+    origin: str,
+    status: str,
+    note: str,
+    provider: str | None = None,
+    source_id: str | None = None,
+    imdb_id: str | None = None,
+) -> dict[str, object]:
     return {
+        "origin": origin,
+        "status": status,
+        "provider": provider,
+        "source_id": source_id,
+        "imdb_id": imdb_id,
         "filename": original.filename,
         "format": original.format,
         "input_characters": len(original.text),
         "prompt_characters": len(prepared.text),
         "prompt_sha256": hashlib.sha256(prepared.text.encode("utf-8")).hexdigest(),
         "pre_filtered": prepared.pre_filtered,
+        "note": note,
     }
+
+
+def _source_status_metadata(
+    *,
+    origin: str,
+    status: str,
+    note: str,
+    provider: str | None = None,
+    source_id: str | None = None,
+    imdb_id: str | None = None,
+) -> dict[str, object]:
+    return {
+        "origin": origin,
+        "status": status,
+        "provider": provider,
+        "source_id": source_id,
+        "imdb_id": imdb_id,
+        "note": note,
+    }
+
+
+def _configured_source_provider() -> str | None:
+    provider = getattr(settings, "VOCABULARY_AUTO_SOURCE_PROVIDER", "")
+    if isinstance(provider, str) and provider.strip().casefold() == "opensubtitles":
+        return "OpenSubtitles"
+    return None
 
 
 def _benchmark_payload(
@@ -47,8 +103,9 @@ def _benchmark_payload(
         item.blank_sentence is not None for item in result.items
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "movie_title": result.movie_title,
+        "release_year": result.release_year,
         "candidate_limit": result.candidate_limit,
         "prompt": {
             "provider": result.provider_name,
@@ -146,6 +203,13 @@ class Command(BaseCommand):
             help="Movie title supplied to the extraction prompt.",
         )
         parser.add_argument(
+            "-y",
+            "--year",
+            type=int,
+            metavar="YEAR",
+            help="Release year used to disambiguate the movie and subtitles.",
+        )
+        parser.add_argument(
             "-l",
             "--limit",
             type=int,
@@ -168,19 +232,27 @@ class Command(BaseCommand):
             "--source-file",
             type=Path,
             metavar="PATH",
-            help="Optional local .txt transcript or .srt subtitle file.",
+            help="Local .txt or .srt source; bypasses automatic acquisition.",
         )
         parser.add_argument(
-            "--items-only",
+            "--words-only",
             action="store_true",
             help="Output only the extracted vocabulary items array.",
         )
 
     def handle(self, *args, **options):
         movie_title = " ".join(options["movie"].split())
+        release_year = options["year"]
         candidate_limit = options["limit"]
         if not movie_title or len(movie_title) > 255:
             raise CommandError("--movie must contain between 1 and 255 characters.")
+        max_release_year = current_year()
+        if release_year is not None and not (
+            1888 <= release_year <= max_release_year
+        ):
+            raise CommandError(
+                f"--year must be between 1888 and {max_release_year}."
+            )
         if not 1 <= candidate_limit <= MAX_GENERATION_CANDIDATES:
             raise CommandError(
                 f"--limit must be between 1 and {MAX_GENERATION_CANDIDATES}."
@@ -195,7 +267,6 @@ class Command(BaseCommand):
             raise CommandError("--output must name a JSON file, not a directory.")
 
         prepared_source = None
-        source_details = None
         source_option = options["source_file"]
         if source_option is not None:
             try:
@@ -215,21 +286,112 @@ class Command(BaseCommand):
                     original_source,
                     candidate_limit=candidate_limit,
                 )
-            except (SourceIngestionError, ValueError) as exc:
+            except (
+                SourceIngestionError,
+                SubtitleFilterConfigurationError,
+                ValueError,
+            ) as exc:
                 raise CommandError(str(exc)) from exc
             if not prepared_source.text.strip():
                 raise CommandError(
                     "The source file contained no locally recognized B1-C2 "
                     "candidate context."
                 )
+            source_note = (
+                f'Source: local {original_source.format.upper()} file "'
+                f'{original_source.filename}", pre-filtered in memory.'
+            )
             source_details = _source_metadata(
                 original=original_source,
                 prepared=prepared_source,
+                origin="local_file",
+                status="used",
+                note=source_note,
             )
+        else:
+            try:
+                acquired_source = acquire_automatic_source(
+                    title=movie_title,
+                    release_year=release_year,
+                )
+            except SourceAcquisitionError as exc:
+                source_note = f"Source: {exc} Using model knowledge."
+                source_details = _source_status_metadata(
+                    origin="automatic",
+                    status="unavailable",
+                    provider=_configured_source_provider(),
+                    note=source_note,
+                )
+            else:
+                if acquired_source is None:
+                    source_note = (
+                        "Source: automatic subtitle acquisition is not configured; "
+                        "using model knowledge."
+                    )
+                    source_details = _source_status_metadata(
+                        origin="model_knowledge",
+                        status="not_configured",
+                        note=source_note,
+                    )
+                else:
+                    try:
+                        filtered_source = prepare_benchmark_source(
+                            acquired_source.document,
+                            candidate_limit=candidate_limit,
+                        )
+                    except (
+                        SubtitleFilterConfigurationError,
+                        TypeError,
+                        ValueError,
+                    ):
+                        source_note = (
+                            "Source: automatically acquired subtitles could not be "
+                            "pre-filtered safely; using model knowledge."
+                        )
+                        source_details = _source_status_metadata(
+                            origin="automatic",
+                            status="filter_error",
+                            provider=acquired_source.provider,
+                            source_id=acquired_source.source_id,
+                            imdb_id=acquired_source.imdb_id,
+                            note=source_note,
+                        )
+                    else:
+                        imdb_reference = f"tt{acquired_source.imdb_id.zfill(7)}"
+                        if filtered_source.text.strip():
+                            prepared_source = filtered_source
+                            source_note = (
+                                "Source: found English subtitles on "
+                                f"{acquired_source.provider} "
+                                f"(IMDb {imdb_reference}, source "
+                                f"{acquired_source.source_id}); fetched and "
+                                "pre-filtered in memory for this run."
+                            )
+                            source_status = "used"
+                        else:
+                            source_note = (
+                                "Source: automatically acquired English subtitles "
+                                "contained no locally recognized B1-C2 candidate "
+                                "context; using model knowledge."
+                            )
+                            source_status = "filtered_empty"
+                        source_details = _source_metadata(
+                            original=acquired_source.document,
+                            prepared=filtered_source,
+                            origin="automatic",
+                            status=source_status,
+                            provider=acquired_source.provider,
+                            source_id=acquired_source.source_id,
+                            imdb_id=acquired_source.imdb_id,
+                            note=source_note,
+                        )
+
+        self.stderr.write(source_note)
 
         try:
             result = benchmark_vocabulary_prompt(
                 movie_title=movie_title,
+                release_year=release_year,
                 candidate_limit=candidate_limit,
                 source=prepared_source,
             )
@@ -238,7 +400,7 @@ class Command(BaseCommand):
 
         payload = (
             _items_payload(result)
-            if options["items_only"]
+            if options["words_only"]
             else _benchmark_payload(result, source=source_details)
         )
         contents = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
