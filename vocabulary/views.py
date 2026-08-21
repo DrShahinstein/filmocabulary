@@ -178,12 +178,15 @@ class MovieVocabularyDetailView(LoginRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         movie = get_object_or_404(
-            Movie.objects.prefetch_related("vocabulary_items"),
+            Movie,
             pk=self.kwargs["movie_pk"],
             user=self.request.user,
         )
         context["movie"] = movie
-        context["items"] = movie.vocabulary_items.all()
+        context["items"] = owned_vocabulary_queryset(self.request.user).filter(
+            movie=movie
+        )
+        context["show_bookmarks"] = True
         return context
 
 

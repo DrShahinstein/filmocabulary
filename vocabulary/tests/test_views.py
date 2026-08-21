@@ -551,6 +551,67 @@ class VocabularyViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def test_movie_detail_renders_each_users_bookmark_state(self):
+        saved_status = UserWordStatus.objects.create(
+            user=self.user,
+            vocabulary_item=self.item,
+            is_saved=True,
+        )
+        unsaved_item = VocabularyItem.objects.create(
+            **vocabulary_item_fields(movie=self.movie, word="methodical")
+        )
+
+        response = self.client.get(
+            reverse("vocabulary:movie_detail", args=[self.movie.pk])
+        )
+
+        items_by_id = {item.pk: item for item in response.context["items"]}
+        self.assertTrue(items_by_id[saved_status.vocabulary_item_id].is_saved_for_user)
+        self.assertFalse(items_by_id[unsaved_item.pk].is_saved_for_user)
+        self.assertContains(response, "bookmark-button--icon-only", count=2)
+        self.assertContains(response, "Remove from saved words")
+        self.assertContains(response, "Save this word")
+        self.assertContains(
+            response,
+            reverse("quizzes:toggle_saved", args=[self.item.pk]),
+        )
+        self.assertContains(
+            response,
+            reverse("quizzes:toggle_saved", args=[unsaved_item.pk]),
+        )
+
+        htmx_response = self.client.get(
+            reverse("vocabulary:movie_detail", args=[self.movie.pk]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertContains(htmx_response, "bookmark-button--icon-only", count=2)
+        self.assertContains(htmx_response, "Remove from saved words")
+        self.assertContains(htmx_response, "Save this word")
+
+    def test_movie_detail_bookmark_control_toggles_saved_state(self):
+        toggle_url = reverse("quizzes:toggle_saved", args=[self.item.pk])
+
+        response = self.client.post(
+            toggle_url,
+            {"display": "icon"},
+            HTTP_HX_REQUEST="true",
+        )
+
+        status = UserWordStatus.objects.get(
+            user=self.user,
+            vocabulary_item=self.item,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(status.is_saved)
+        self.assertContains(response, "Remove from saved words")
+        self.assertContains(response, "bookmark-button--icon-only")
+        self.assertNotContains(response, "<span>Saved</span>")
+
+        response = self.client.get(
+            reverse("vocabulary:movie_detail", args=[self.movie.pk])
+        )
+        self.assertContains(response, "Remove from saved words")
+
     def test_words_explorer_requires_login_and_scopes_items_to_owner(self):
         other_movie = Movie.objects.create(
             user=self.other_user,

@@ -1,4 +1,4 @@
-<form class="bookmark-form"
+<form class="bookmark-form{% if icon_only %} bookmark-form--icon-only{% endif %}"
       method="post"
       action="{% url 'quizzes:toggle_saved' item.pk %}"
       hx-post="{% url 'quizzes:toggle_saved' item.pk %}"
@@ -6,11 +6,13 @@
       hx-swap="outerHTML"
       hx-disabled-elt="find button">
     {% csrf_token %}
-    <button class="button button--small bookmark-button{% if is_saved %} is-saved{% endif %}"
+    {% if icon_only %}<input type="hidden" name="display" value="icon">{% endif %}
+    <button class="{% if icon_only %}icon-button icon-button--quiet bookmark-button bookmark-button--icon-only{% else %}button button--small bookmark-button{% endif %}{% if is_saved %} is-saved{% endif %}"
             type="submit"
             aria-pressed="{% if is_saved %}true{% else %}false{% endif %}"
+            aria-label="{% if is_saved %}Remove from saved words{% else %}Save this word{% endif %}"
             title="{% if is_saved %}Remove from saved words{% else %}Save this word{% endif %}">
         <i data-lucide="bookmark" aria-hidden="true"></i>
-        <span>{% if is_saved %}Saved{% else %}Save{% endif %}</span>
+        {% if not icon_only %}<span>{% if is_saved %}Saved{% else %}Save{% endif %}</span>{% endif %}
     </button>
 </form>

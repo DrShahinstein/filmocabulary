@@ -446,7 +446,11 @@ class SavedWordToggleView(LoginRequiredMixin, View):
         return render(
             request,
             "partials/bookmark_button.html",
-            {"item": item, "is_saved": word_status.is_saved},
+            {
+                "item": item,
+                "is_saved": word_status.is_saved,
+                "icon_only": request.POST.get("display") == "icon",
+            },
         )
 
 
