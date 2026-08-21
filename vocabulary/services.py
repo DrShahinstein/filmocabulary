@@ -13,6 +13,7 @@ from movies.models import Movie
 
 from .constants import (
     GENERATION_CANDIDATE_SURPLUS_RATIO,
+    MAX_GENERATION_CANDIDATES,
     MAX_GENERATION_CANDIDATE_SURPLUS,
     MAX_GENERATION_ITEMS,
     MIN_GENERATION_CANDIDATE_SURPLUS,
@@ -146,6 +147,34 @@ class _RequestedCandidates:
     items: tuple[VocabularyItemCandidate, ...]
     returned_count: int
     schema_rejections: CandidateSchemaRejections
+    trimmed_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyPromptBenchmarkResult:
+    movie_title: str
+    candidate_limit: int
+    provider_name: str
+    provider_returned_count: int
+    schema_valid_count: int
+    items: tuple[VocabularyItemResponse, ...]
+    rejections: CandidateRejections
+    schema_rejections: CandidateSchemaRejections
+    cloze_ineligibility: ClozeIneligibility
+    over_limit_count: int = 0
+
+    @property
+    def accepted_count(self) -> int:
+        return len(self.items)
+
+    @property
+    def rejected_count(self) -> int:
+        return (
+            self.rejections.duplicate
+            + self.rejections.ungrounded
+            + self.schema_rejections.total
+            + self.over_limit_count
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +261,28 @@ def _filter_source(
         document,
         max_words=budget.max_words,
         max_characters=budget.max_characters,
+    )
+
+
+def prepare_benchmark_source(
+    document: SourceDocument,
+    *,
+    candidate_limit: int,
+) -> SourceDocument:
+    """Apply the production source filter without consulting cache or database."""
+    if not isinstance(document, SourceDocument) or not document.text.strip():
+        raise ValueError("source must be a non-empty SourceDocument.")
+    if (
+        not isinstance(candidate_limit, int)
+        or isinstance(candidate_limit, bool)
+        or not 1 <= candidate_limit <= MAX_GENERATION_CANDIDATES
+    ):
+        raise ValueError(
+            f"candidate_limit must be between 1 and {MAX_GENERATION_CANDIDATES}."
+        )
+    return _filter_source(
+        document,
+        item_count=min(candidate_limit, MAX_GENERATION_ITEMS),
     )
 
 
@@ -417,21 +468,18 @@ def _normalise_title(value: str) -> str:
     return " ".join(value.split()).casefold()
 
 
-def _request_candidates(
+def _request_candidates_for_reference(
     *,
-    movie: Movie,
+    movie_title: str,
+    movie_reference: str,
     candidate_limit: int,
     provider: VocabularyLLMClient,
     source: SourceDocument | None,
 ) -> _RequestedCandidates:
-    movie_label = movie.title
-    if movie.release_year is not None:
-        movie_label = f"{movie.title} ({movie.release_year})"
-
     try:
         parsed = provider.generate(
-            movie_title=movie.title,
-            movie_reference=movie_label,
+            movie_title=movie_title,
+            movie_reference=movie_reference,
             candidate_limit=candidate_limit,
             source=source,
         )
@@ -479,24 +527,45 @@ def _request_candidates(
             schema_rejections=CandidateSchemaRejections(),
         )
 
-    if _normalise_title(requested.movie_title) != _normalise_title(movie.title):
+    if _normalise_title(requested.movie_title) != _normalise_title(movie_title):
         raise VocabularyResponseError(
             "The generated vocabulary did not match the selected movie. Please try again."
         )
     if len(requested.items) > candidate_limit:
+        trimmed_count = len(requested.items) - candidate_limit
         logger.warning(
             "%s returned %d candidates above the request budget; extras were trimmed",
             provider.name,
-            len(requested.items) - candidate_limit,
+            trimmed_count,
         )
         requested = _RequestedCandidates(
             movie_title=requested.movie_title,
             items=requested.items[:candidate_limit],
             returned_count=requested.returned_count,
             schema_rejections=requested.schema_rejections,
+            trimmed_count=requested.trimmed_count + trimmed_count,
         )
 
     return requested
+
+
+def _request_candidates(
+    *,
+    movie: Movie,
+    candidate_limit: int,
+    provider: VocabularyLLMClient,
+    source: SourceDocument | None,
+) -> _RequestedCandidates:
+    movie_reference = movie.title
+    if movie.release_year is not None:
+        movie_reference = f"{movie.title} ({movie.release_year})"
+    return _request_candidates_for_reference(
+        movie_title=movie.title,
+        movie_reference=movie_reference,
+        candidate_limit=candidate_limit,
+        provider=provider,
+        source=source,
+    )
 
 
 def _accept_candidates(
@@ -562,6 +631,65 @@ def _accept_candidates(
         ),
         ClozeIneligibility(**cloze_counts),
     )
+
+
+def benchmark_vocabulary_prompt(
+    *,
+    movie_title: str,
+    candidate_limit: int = 50,
+    client: Any | None = None,
+    source: SourceDocument | None = None,
+) -> VocabularyPromptBenchmarkResult:
+    """Run the production extraction and validation path without database writes."""
+    if not isinstance(movie_title, str):
+        raise ValueError("A movie title is required.")
+    cleaned_title = " ".join(movie_title.split())
+    if not cleaned_title or len(cleaned_title) > 255:
+        raise ValueError("A movie title between 1 and 255 characters is required.")
+    if (
+        not isinstance(candidate_limit, int)
+        or isinstance(candidate_limit, bool)
+        or not 1 <= candidate_limit <= MAX_GENERATION_CANDIDATES
+    ):
+        raise ValueError(
+            f"candidate_limit must be between 1 and {MAX_GENERATION_CANDIDATES}."
+        )
+    if source is not None and (
+        not isinstance(source, SourceDocument) or not source.text.strip()
+    ):
+        raise ValueError("source must be a non-empty SourceDocument.")
+
+    try:
+        provider = build_vocabulary_llm_client(client=client)
+    except ProviderConfigurationError as exc:
+        raise VocabularyConfigurationError(str(exc)) from exc
+    try:
+        requested = _request_candidates_for_reference(
+            movie_title=cleaned_title,
+            movie_reference=cleaned_title,
+            candidate_limit=candidate_limit,
+            provider=provider,
+            source=source,
+        )
+        accepted, rejections, cloze_ineligibility = _accept_candidates(
+            requested,
+            source=source,
+            seen_terms=set(),
+        )
+        return VocabularyPromptBenchmarkResult(
+            movie_title=cleaned_title,
+            candidate_limit=candidate_limit,
+            provider_name=provider.name,
+            provider_returned_count=requested.returned_count,
+            schema_valid_count=len(requested.items) + requested.trimmed_count,
+            items=tuple(accepted),
+            rejections=rejections,
+            schema_rejections=requested.schema_rejections,
+            cloze_ineligibility=cloze_ineligibility,
+            over_limit_count=requested.trimmed_count,
+        )
+    finally:
+        provider.close()
 
 
 def _candidate_limit(item_count: int) -> int:
