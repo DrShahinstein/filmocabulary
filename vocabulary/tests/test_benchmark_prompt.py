@@ -9,6 +9,7 @@ from django.core.management.base import CommandError
 from django.test import SimpleTestCase, override_settings
 
 from vocabulary.ingestion import SourceDocument
+from vocabulary.management.commands.benchmark_prompt import Command
 from vocabulary.providers import (
     CandidateSchemaRejections,
     VocabularyProviderResult,
@@ -168,6 +169,28 @@ class PromptBenchmarkServiceTests(SimpleTestCase):
 
 @override_settings(LLM_MODEL="benchmark-test-model")
 class BenchmarkPromptCommandTests(SimpleTestCase):
+    def test_help_shows_only_benchmark_options(self):
+        parser = Command().create_parser("manage.py", "benchmark_prompt")
+
+        help_text = parser.format_help()
+
+        self.assertIn("-m TITLE, --movie TITLE", help_text)
+        self.assertIn("-l COUNT, --limit COUNT", help_text)
+        self.assertIn("-o PATH, --output PATH", help_text)
+        self.assertIn("-f PATH, --source-file PATH", help_text)
+        self.assertIn("--items-only", help_text)
+        for hidden_option in (
+            "--version",
+            "--verbosity",
+            "--settings",
+            "--pythonpath",
+            "--traceback",
+            "--no-color",
+            "--force-color",
+            "--skip-checks",
+        ):
+            self.assertNotIn(hidden_option, help_text)
+
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
     def test_pretty_prints_json_to_stdout_with_default_limit(self, benchmark):
         benchmark.return_value = benchmark_result()
@@ -219,6 +242,44 @@ class BenchmarkPromptCommandTests(SimpleTestCase):
         self.assertIn("1 accepted, 2 rejected", stdout.getvalue())
         self.assertIn("v1.json", stdout.getvalue())
         self.assertNotIn('"items"', stdout.getvalue())
+
+    @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
+    def test_items_only_prints_bare_items_array(self, benchmark):
+        benchmark.return_value = benchmark_result()
+        stdout = StringIO()
+
+        call_command(
+            "benchmark_prompt",
+            movie="Inception",
+            items_only=True,
+            stdout=stdout,
+        )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertIsInstance(payload, list)
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["word_or_phrase"], "scrutinize")
+        self.assertNotIn("schema_version", payload[0])
+
+    @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
+    def test_items_only_writes_bare_items_array(self, benchmark):
+        benchmark.return_value = benchmark_result()
+        stdout = StringIO()
+
+        with TemporaryDirectory() as temporary_directory:
+            destination = Path(temporary_directory) / "items.json"
+            call_command(
+                "benchmark_prompt",
+                movie="Inception",
+                items_only=True,
+                output=destination,
+                stdout=stdout,
+            )
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+
+        self.assertIsInstance(payload, list)
+        self.assertEqual(payload[0]["word_or_phrase"], "scrutinize")
+        self.assertIn("1 accepted, 2 rejected", stdout.getvalue())
 
     @patch("vocabulary.management.commands.benchmark_prompt.benchmark_vocabulary_prompt")
     def test_parses_and_prefilters_local_source_file(self, benchmark):

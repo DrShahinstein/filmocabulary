@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from django.conf import settings
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand, CommandError, DjangoHelpFormatter
 
 from vocabulary.constants import MAX_GENERATION_CANDIDATES
 from vocabulary.ingestion import SourceIngestionError, parse_local_source
@@ -17,6 +17,12 @@ from vocabulary.services import (
     benchmark_vocabulary_prompt,
     prepare_benchmark_source,
 )
+
+
+class BenchmarkHelpFormatter(DjangoHelpFormatter):
+    def __init__(self, *args, **kwargs):
+        kwargs["max_help_position"] = 32
+        super().__init__(*args, **kwargs)
 
 
 def _source_metadata(*, original, prepared) -> dict[str, object]:
@@ -74,10 +80,14 @@ def _benchmark_payload(
             **cloze_reasons,
             "total": result.cloze_ineligibility.total,
         },
-        "items": [
-            item.model_dump(mode="json", by_alias=True) for item in result.items
-        ],
+        "items": _items_payload(result),
     }
+
+
+def _items_payload(
+    result: VocabularyPromptBenchmarkResult,
+) -> list[dict[str, object]]:
+    return [item.model_dump(mode="json", by_alias=True) for item in result.items]
 
 
 def _write_json(destination: Path, contents: str) -> None:
@@ -106,13 +116,33 @@ def _write_json(destination: Path, contents: str) -> None:
 
 
 class Command(BaseCommand):
-    help = "Benchmark the configured vocabulary extraction prompt without database writes."
+    help = (
+        "Run the production vocabulary extraction pipeline without writing "
+        "to the database."
+    )
+    missing_args_message = "A movie title is required. Use --movie TITLE."
+    requires_system_checks = []
+    suppressed_base_arguments = {
+        "--version",
+        "-v",
+        "--verbosity",
+        "--settings",
+        "--pythonpath",
+        "--traceback",
+        "--no-color",
+        "--force-color",
+    }
+
+    def create_parser(self, prog_name, subcommand, **kwargs):
+        kwargs.setdefault("formatter_class", BenchmarkHelpFormatter)
+        return super().create_parser(prog_name, subcommand, **kwargs)
 
     def add_arguments(self, parser):
         parser.add_argument(
             "-m",
             "--movie",
             required=True,
+            metavar="TITLE",
             help="Movie title supplied to the extraction prompt.",
         )
         parser.add_argument(
@@ -120,6 +150,7 @@ class Command(BaseCommand):
             "--limit",
             type=int,
             default=50,
+            metavar="COUNT",
             help=(
                 "Maximum candidates requested from the provider "
                 f"(default: 50; maximum: {MAX_GENERATION_CANDIDATES})."
@@ -129,13 +160,20 @@ class Command(BaseCommand):
             "-o",
             "--output",
             type=Path,
+            metavar="PATH",
             help="Optional JSON output path; an existing file is atomically replaced.",
         )
         parser.add_argument(
             "-f",
             "--source-file",
             type=Path,
+            metavar="PATH",
             help="Optional local .txt transcript or .srt subtitle file.",
+        )
+        parser.add_argument(
+            "--items-only",
+            action="store_true",
+            help="Output only the extracted vocabulary items array.",
         )
 
     def handle(self, *args, **options):
@@ -198,7 +236,11 @@ class Command(BaseCommand):
         except (VocabularyGenerationError, ValueError) as exc:
             raise CommandError(str(exc)) from exc
 
-        payload = _benchmark_payload(result, source=source_details)
+        payload = (
+            _items_payload(result)
+            if options["items_only"]
+            else _benchmark_payload(result, source=source_details)
+        )
         contents = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
         if destination is None:
             self.stdout.write(contents, ending="")
