@@ -92,8 +92,6 @@ candidates so weak, duplicated, or invalid entries can be removed without affect
 rest of the batch. Only vocabulary that passes validation is saved. If fewer words qualify
 than requested, the good results are kept and the system does not make a refill request.
 
-<br/>
-
 ### Optional Editorial Review
 
 Editorial review makes a second LLM request to inspect the first result. It can clean up
@@ -113,8 +111,6 @@ Enable it when the extra quality is worth the additional tokens:
 ```env
 LLM_EDITORIAL_REVIEW=True
 ```
-
-<br/>
 
 ### Subtitle Preparation
 
