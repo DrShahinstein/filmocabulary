@@ -2490,7 +2490,8 @@ textarea::placeholder {
     }
 
     .quiz-question__toolbar .bookmark-button,
-    .quiz-question__bookmark .bookmark-button {
+    .quiz-question__bookmark .bookmark-button,
+    .word-card .bookmark-button {
         width: 34px;
         height: 34px;
         min-height: 34px;
@@ -2500,8 +2501,24 @@ textarea::placeholder {
     }
 
     .quiz-question__toolbar .bookmark-button span,
-    .quiz-question__bookmark .bookmark-button span {
+    .quiz-question__bookmark .bookmark-button span,
+    .word-card .bookmark-button span {
         display: none;
+    }
+
+    .word-card .learning-card__header {
+        position: relative;
+        padding-right: 44px;
+    }
+
+    .word-card .saved-card__tools {
+        display: block;
+    }
+
+    .word-card .bookmark-form {
+        position: absolute;
+        top: 0;
+        right: 0;
     }
 
     .practice-filter {
