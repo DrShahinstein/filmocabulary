@@ -136,32 +136,24 @@ python manage.py makemigrations --check --dry-run
 
 ### Prompt Benchmarking
 
-Use the database-free benchmarking command to iterate on extraction prompts from the
-terminal. It uses the configured `LLM_*` provider and the same schema validation,
-grounding, duplicate checks, and cloze derivation as normal generation, but never creates
-movies or vocabulary records.
+The vocabulary generation pipeline is exactly the same. Runs as memory-only and it is independent of the SQLite database. This allows you to monitor and test the generated words.
 
 ```bash
-python manage.py benchmark_prompt --movie "Inception" --year 2010
-python manage.py benchmark_prompt -m "Inception" -y 2010 -l 50 -o benchmarks/inception_v1.json
-python manage.py benchmark_prompt -m "Inception" -y 2010 -f transcripts/inception.srt -o benchmarks/inception_grounded.json
-python manage.py benchmark_prompt -m "Inception" -y 2010 --words-only -o benchmarks/inception_words.json
+python manage.py benchmark_prompt --help
+python manage.py benchmark_prompt -m "The Matrix" -y 1999 -l 100 --words-only -o ../the_matrix_1999.json 
 ```
 
 Without `--output`, the command pretty-prints the artifact to the console. With an output
 path, it atomically creates or replaces that JSON file and prints only a short summary.
-Artifacts contain accepted items, candidate and rejection counts, detailed schema and
-cloze-ineligibility categories, configured model metadata, a system-prompt fingerprint,
-and filtered-source provenance. The optional release year disambiguates remakes and is
-included in the model's movie reference. The candidate limit defaults to 50 and accepts
-values from 1 through 115.
 
 Without `--source-file`, the command attempts the configured OpenSubtitles acquisition
 path, pre-filters the downloaded English subtitles entirely in memory, and reports the
 provider, IMDb ID, subtitle source ID, and source fingerprint. It never reads or writes
 the application's subtitle cache. Acquisition failures are reported before the command
 visibly falls back to model knowledge. Local sources must be `.txt` or `.srt`; they use
-the same filtering pipeline and bypass automatic acquisition. Use `--words-only` to write
+the same filtering pipeline and bypass automatic acquisition.
+
+Use `--words-only` to write
 or print the accepted vocabulary array without the metadata wrapper when comparing prompt
 variants side by side; source provenance is still printed to the terminal.
 
