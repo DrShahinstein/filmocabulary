@@ -98,30 +98,6 @@ the term, but cloze eligibility is optional and never prevents a grounded item f
 used in the definition-based quiz. Candidate-yield logs separate schema, grounding,
 duplicate, and cloze-ineligibility diagnostics without recording generated content.
 
-### Prompt Benchmarking
-
-Use the database-free benchmarking command to iterate on extraction prompts from the
-terminal. It uses the configured `LLM_*` provider and the same schema validation,
-grounding, duplicate checks, and cloze derivation as normal generation, but never creates
-movies or vocabulary records.
-
-```bash
-python manage.py benchmark_prompt --movie "Inception"
-python manage.py benchmark_prompt -m "Inception" -l 50 -o benchmarks/inception_v1.json
-python manage.py benchmark_prompt -m "Inception" -f transcripts/inception.srt -o benchmarks/inception_grounded.json
-python manage.py benchmark_prompt -m "Inception" --items-only -o benchmarks/inception_items.json
-```
-
-Without `--output`, the command pretty-prints the artifact to the console. With an output
-path, it atomically creates or replaces that JSON file and prints only a short summary.
-Artifacts contain accepted items, candidate and rejection counts, detailed schema and
-cloze-ineligibility categories, configured model metadata, a system-prompt fingerprint,
-and optional filtered-source metadata. The candidate limit defaults to 50 and accepts
-values from 1 through 115. Local sources must be `.txt` or `.srt`; they are parsed and
-pre-filtered through the production source pipeline before being sent to the model.
-Use `--items-only` to write or print the accepted vocabulary array without the metadata
-wrapper when comparing prompt variants side by side.
-
 ### Token Strategy
 
 The largest avoidable input cost is normally the full subtitle file. Filmocabulary reduces
@@ -157,6 +133,30 @@ python manage.py test
 python manage.py check
 python manage.py makemigrations --check --dry-run
 ```
+
+### Prompt Benchmarking
+
+Use the database-free benchmarking command to iterate on extraction prompts from the
+terminal. It uses the configured `LLM_*` provider and the same schema validation,
+grounding, duplicate checks, and cloze derivation as normal generation, but never creates
+movies or vocabulary records.
+
+```bash
+python manage.py benchmark_prompt --movie "Inception"
+python manage.py benchmark_prompt -m "Inception" -l 50 -o benchmarks/inception_v1.json
+python manage.py benchmark_prompt -m "Inception" -f transcripts/inception.srt -o benchmarks/inception_grounded.json
+python manage.py benchmark_prompt -m "Inception" --items-only -o benchmarks/inception_items.json
+```
+
+Without `--output`, the command pretty-prints the artifact to the console. With an output
+path, it atomically creates or replaces that JSON file and prints only a short summary.
+Artifacts contain accepted items, candidate and rejection counts, detailed schema and
+cloze-ineligibility categories, configured model metadata, a system-prompt fingerprint,
+and optional filtered-source metadata. The candidate limit defaults to 50 and accepts
+values from 1 through 115. Local sources must be `.txt` or `.srt`; they are parsed and
+pre-filtered through the production source pipeline before being sent to the model.
+Use `--items-only` to write or print the accepted vocabulary array without the metadata
+wrapper when comparing prompt variants side by side.
 
 ## Home Production
 
