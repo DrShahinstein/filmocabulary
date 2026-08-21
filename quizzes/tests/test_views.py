@@ -10,6 +10,7 @@ from quizzes.services import (
     DEFINITION_MODE,
     TARGETED_POOL,
     generate_question,
+    question_from_token,
     sign_targeted_scope,
     targeted_scope_from_token,
 )
@@ -352,6 +353,74 @@ class QuizViewTests(TestCase):
         self.assertNotEqual(response.context["question"].target, question.target)
         self.assertFalse(UserWordStatus.objects.filter(user=self.user).exists())
 
+    def test_skip_does_not_repeat_until_the_random_round_is_exhausted(self):
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"]),
+            HTTP_HX_REQUEST="true",
+        )
+        current = response.context["question"]
+        seen_target_ids = [current.target.pk]
+
+        for _ in range(len(self.items) - 1):
+            response = self.client.post(
+                reverse("quizzes:skip", args=["collection"]),
+                {"question_token": current.token},
+                HTTP_HX_REQUEST="true",
+            )
+            current = response.context["question"]
+            self.assertNotIn(current.target.pk, seen_target_ids)
+            seen_target_ids.append(current.target.pk)
+
+        self.assertEqual(len(set(seen_target_ids)), len(self.items))
+
+        previous_target_id = current.target.pk
+        response = self.client.post(
+            reverse("quizzes:skip", args=["collection"]),
+            {"question_token": current.token},
+            HTTP_HX_REQUEST="true",
+        )
+        restarted = response.context["question"]
+
+        self.assertTrue(restarted.round_reset)
+        self.assertNotEqual(restarted.target.pk, previous_target_id)
+        self.assertIn(restarted.target.pk, seen_target_ids)
+
+    def test_answer_next_continues_the_same_round_without_repeating(self):
+        response = self.client.get(
+            reverse("quizzes:question", args=["collection"]),
+            HTTP_HX_REQUEST="true",
+        )
+        current = response.context["question"]
+        answer_response = self.client.post(
+            reverse("quizzes:answer", args=["collection"]),
+            {
+                "question_token": current.token,
+                "selected_option": current.target.pk,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        next_response = self.client.get(
+            answer_response.context["next_question_url"],
+            HTTP_HX_REQUEST="true",
+        )
+        following = next_response.context["question"]
+
+        self.assertNotEqual(following.target, current.target)
+        self.assertEqual(following.run_id, current.run_id)
+
+    def test_separate_launches_keep_independent_rounds(self):
+        first = self.client.get(
+            reverse("quizzes:question", args=["collection"]),
+            HTTP_HX_REQUEST="true",
+        ).context["question"]
+        second = self.client.get(
+            reverse("quizzes:question", args=["collection"]),
+            HTTP_HX_REQUEST="true",
+        ).context["question"]
+
+        self.assertNotEqual(first.run_id, second.run_id)
+
     def test_targeted_skip_and_next_url_preserve_signed_scope_and_mode(self):
         filter_spec = VocabularyFilterSpec(movie_id=self.movie.pk)
         scope_token = sign_targeted_scope(
@@ -382,6 +451,13 @@ class QuizViewTests(TestCase):
         )
         self.assertEqual(skip_next_query["mode"], [CLOZE_MODE])
         self.assertEqual(
+            question_from_token(
+                user=self.user,
+                token=skip_next_query["continue"][0],
+            ).run_id,
+            skipped_question.run_id,
+        )
+        self.assertEqual(
             targeted_scope_from_token(
                 user=self.user,
                 token=skip_next_query["scope"][0],
@@ -403,6 +479,13 @@ class QuizViewTests(TestCase):
             urlparse(answer_response.context["next_question_url"]).query
         )
         self.assertEqual(answer_next_query["mode"], [CLOZE_MODE])
+        self.assertEqual(
+            question_from_token(
+                user=self.user,
+                token=answer_next_query["continue"][0],
+            ).run_id,
+            skipped_question.run_id,
+        )
         self.assertEqual(
             targeted_scope_from_token(
                 user=self.user,

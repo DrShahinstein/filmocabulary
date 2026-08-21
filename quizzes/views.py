@@ -13,6 +13,7 @@ from vocabulary.models import VocabularyItem
 from .forms import (
     PracticeSetupForm,
     QuizAnswerForm,
+    QuizContinuationForm,
     TargetedPracticeLaunchForm,
 )
 from .models import UserWordStatus
@@ -40,9 +41,12 @@ def _question_url(
     *,
     mode="definition",
     scope_token=None,
+    continuation_token=None,
 ):
     url = reverse("quizzes:question", args=[pool])
     parameters = [("mode", mode)]
+    if continuation_token:
+        parameters.append(("continue", continuation_token))
     if pool == TARGETED_POOL:
         if scope_token:
             parameters.append(("scope", scope_token))
@@ -109,12 +113,67 @@ def _question_context(
                     question.movie_ids,
                     mode=question.mode,
                     scope_token=question.scope_token,
+                    continuation_token=question.token,
                 ),
             }
         )
     if unavailable_message is not None:
         context["unavailable_message"] = unavailable_message
     return context
+
+
+QUIZ_RUNS_SESSION_KEY = "quiz_run_histories"
+MAX_QUIZ_RUNS = 12
+
+
+def _clean_quiz_run_histories(request):
+    raw_histories = request.session.get(QUIZ_RUNS_SESSION_KEY, {})
+    if not isinstance(raw_histories, dict):
+        return {}
+
+    histories = {}
+    for run_id, raw_history in raw_histories.items():
+        if not isinstance(run_id, str) or not isinstance(raw_history, list):
+            continue
+        history = []
+        seen = set()
+        for item_id in raw_history:
+            if (
+                isinstance(item_id, int)
+                and not isinstance(item_id, bool)
+                and item_id > 0
+                and item_id not in seen
+            ):
+                history.append(item_id)
+                seen.add(item_id)
+        histories[run_id] = history
+    return histories
+
+
+def _question_history(request, question):
+    if question.run_id is None:
+        return (question.target.pk,)
+    history = list(
+        _clean_quiz_run_histories(request).get(question.run_id, [])
+    )
+    if question.target.pk in history:
+        history.remove(question.target.pk)
+    history.append(question.target.pk)
+    return tuple(history)
+
+
+def _record_question(request, question):
+    if question.run_id is None:
+        return
+    histories = _clean_quiz_run_histories(request)
+    history = [] if question.round_reset else histories.pop(question.run_id, [])
+    if question.target.pk in history:
+        history.remove(question.target.pk)
+    history.append(question.target.pk)
+    histories[question.run_id] = history
+    while len(histories) > MAX_QUIZ_RUNS:
+        histories.pop(next(iter(histories)))
+    request.session[QUIZ_RUNS_SESSION_KEY] = histories
 
 
 class ProgressDashboardView(LoginRequiredMixin, TemplateView):
@@ -192,6 +251,50 @@ class QuizQuestionView(LoginRequiredMixin, View):
         pool = kwargs["pool"]
         filter_spec = None
 
+        if "continue" in request.GET:
+            continuation_form = QuizContinuationForm(
+                {"token": request.GET.get("continue", "")}
+            )
+            current = None
+            try:
+                if not continuation_form.is_valid():
+                    raise QuizTokenError(
+                        "This question is invalid. Load a new one to continue."
+                    )
+                current = question_from_token(
+                    user=request.user,
+                    token=continuation_form.cleaned_data["token"],
+                )
+                if current.pool != pool:
+                    raise QuizTokenError(
+                        "This question belongs to a different practice pool."
+                    )
+                question = skip_question(
+                    user=request.user,
+                    token=current.token,
+                    expected_pool=pool,
+                    excluded_target_ids=_question_history(request, current),
+                )
+            except QuizTokenError as exc:
+                context = _question_context(
+                    pool=pool,
+                    filter_spec=current.filter_spec if current else None,
+                    unavailable_message=str(exc),
+                )
+                return self._render(request, context, status=400)
+            except QuizUnavailableError as exc:
+                context = _question_context(
+                    pool=pool,
+                    filter_spec=current.filter_spec if current else None,
+                    unavailable_message=str(exc),
+                )
+                return self._render(request, context)
+            _record_question(request, question)
+            return self._render(
+                request,
+                _question_context(pool=pool, question=question),
+            )
+
         if pool == TARGETED_POOL:
             launch_form = TargetedPracticeLaunchForm(request.GET)
             if not launch_form.is_valid():
@@ -228,6 +331,7 @@ class QuizQuestionView(LoginRequiredMixin, View):
                     unavailable_message=str(exc),
                 )
             else:
+                _record_question(request, question)
                 context = _question_context(pool=pool, question=question)
             return self._render(request, context)
 
@@ -257,6 +361,7 @@ class QuizQuestionView(LoginRequiredMixin, View):
         except QuizUnavailableError as exc:
             context = _question_context(pool=pool, unavailable_message=str(exc))
         else:
+            _record_question(request, question)
             context = _question_context(pool=pool, question=question)
         return self._render(request, context)
 
@@ -288,6 +393,7 @@ class QuizSkipView(LoginRequiredMixin, View):
                 user=request.user,
                 token=current.token,
                 expected_pool=pool,
+                excluded_target_ids=_question_history(request, current),
             )
         except QuizTokenError as exc:
             context = _question_context(
@@ -304,6 +410,7 @@ class QuizSkipView(LoginRequiredMixin, View):
             )
             status = 200
         else:
+            _record_question(request, question)
             context = _question_context(pool=pool, question=question)
             status = 200
 
@@ -414,6 +521,7 @@ class QuizAnswerView(LoginRequiredMixin, View):
                 result.question.movie_ids,
                 mode=result.question.mode,
                 scope_token=result.question.scope_token,
+                continuation_token=result.question.token,
             ),
             **_practice_metadata(
                 pool=question.pool,

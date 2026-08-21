@@ -78,6 +78,10 @@ class QuizAnswerForm(forms.Form):
         self.fields["question_token"].initial = question.token
 
 
+class QuizContinuationForm(forms.Form):
+    token = forms.CharField(max_length=8192)
+
+
 class TargetedPracticeLaunchForm(forms.Form):
     mode = forms.ChoiceField(
         choices=QUIZ_MODE_CHOICES[:2],

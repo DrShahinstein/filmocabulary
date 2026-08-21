@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from django.core import signing
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Max, Min
+from django.db.models import Max, Min, Subquery
 from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
@@ -66,6 +66,8 @@ class QuizQuestion:
     filter_spec: VocabularyFilterSpec | None
     scope_token: str | None
     is_saved: bool
+    run_id: str | None
+    round_reset: bool = False
 
     @property
     def updates_progress(self) -> bool:
@@ -145,6 +147,35 @@ def _normalise_movie_ids(*, user, movie_ids):
     return normalized
 
 
+def _normalise_excluded_target_ids(excluded_target_ids):
+    try:
+        values = tuple(excluded_target_ids)
+    except TypeError as exc:
+        raise QuizUnavailableError("This practice round is invalid.") from exc
+
+    normalized = []
+    seen = set()
+    for value in values:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise QuizUnavailableError("This practice round is invalid.")
+        if value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return tuple(normalized)
+
+
+def _normalise_run_id(run_id):
+    if run_id is None:
+        return secrets.token_urlsafe(12)
+    if (
+        not isinstance(run_id, str)
+        or not 16 <= len(run_id) <= 64
+        or any(not (character.isalnum() or character in "-_") for character in run_id)
+    ):
+        raise QuizUnavailableError("This practice round is invalid.")
+    return run_id
+
+
 def _owned_vocabulary(user, movie_ids=()):
     queryset = (
         owned_vocabulary_queryset(user)
@@ -200,6 +231,23 @@ def _random_row(queryset, rng):
     return row or queryset.order_by("pk").first()
 
 
+def _exclude_seen_targets(*, queryset, user, excluded_ids):
+    """Exclude seen rows and duplicate spellings owned through another movie."""
+    if not excluded_ids:
+        return queryset
+    seen_term_keys = (
+        owned_vocabulary_queryset(user)
+        .filter(pk__in=excluded_ids)
+        .annotate(_seen_term_key=Lower(Trim("word_or_phrase")))
+        .values("_seen_term_key")
+    )
+    return (
+        queryset.annotate(_target_term_key=Lower(Trim("word_or_phrase")))
+        .exclude(pk__in=excluded_ids)
+        .exclude(_target_term_key__in=Subquery(seen_term_keys))
+    )
+
+
 def _target_queryset(
     user,
     pool,
@@ -224,14 +272,26 @@ def _target_queryset(
             status=UserWordStatus.Status.NEW
         ).values("vocabulary_item_id")
         eligible = _cloze_eligible(owned) if mode == CLOZE_MODE else owned
-        new_words = eligible.exclude(pk__in=encountered_ids).exclude(pk__in=excluded_ids)
+        new_words = _exclude_seen_targets(
+            queryset=eligible.exclude(pk__in=encountered_ids),
+            user=user,
+            excluded_ids=excluded_ids,
+        )
         if new_words.exists():
             return new_words
-        return eligible.exclude(pk__in=excluded_ids)
+        return _exclude_seen_targets(
+            queryset=eligible,
+            user=user,
+            excluded_ids=excluded_ids,
+        )
 
     if mode == CLOZE_MODE:
         targets = _cloze_eligible(targets)
-    return targets.exclude(pk__in=excluded_ids)
+    return _exclude_seen_targets(
+        queryset=targets,
+        user=user,
+        excluded_ids=excluded_ids,
+    )
 
 
 def _select_distractors(*, user, target, movie_ids, kind, rng):
@@ -311,6 +371,7 @@ def generate_question(
     filter_spec=None,
     scope_token=None,
     excluded_target_ids=(),
+    run_id=None,
     rng=None,
 ):
     """Build a signed definition or cloze question from owned vocabulary."""
@@ -336,17 +397,39 @@ def generate_question(
     elif filter_spec is not None or scope_token is not None:
         raise QuizUnavailableError("Choose a valid practice pool.")
 
+    normalized_excluded_ids = _normalise_excluded_target_ids(excluded_target_ids)
+    normalized_run_id = _normalise_run_id(run_id)
     rng = rng or random.SystemRandom()
+
+    def select_target(question_mode, excluded_ids):
+        targets = _target_queryset(
+            user,
+            pool,
+            mode=question_mode,
+            movie_ids=normalized_movie_ids,
+            filter_spec=filter_spec,
+            excluded_ids=excluded_ids,
+        )
+        return _random_row(targets, rng)
+
     targets = _target_queryset(
         user,
         pool,
         mode=mode,
         movie_ids=normalized_movie_ids,
         filter_spec=filter_spec,
-        excluded_ids=excluded_target_ids,
+        excluded_ids=normalized_excluded_ids,
     )
+    round_reset = False
     if target is None:
         target = _random_row(targets, rng)
+        if target is None and normalized_excluded_ids:
+            # Start a new randomized round. Avoid an immediate boundary repeat
+            # whenever the eligible pool contains more than one distinct term.
+            target = select_target(mode, normalized_excluded_ids[-1:])
+            if target is None:
+                target = select_target(mode, ())
+            round_reset = target is not None
     else:
         if pool in ("learning", TARGETED_POOL) or mode == CLOZE_MODE:
             allowed_targets = targets
@@ -383,11 +466,18 @@ def generate_question(
             mode=alternative_kind,
             movie_ids=normalized_movie_ids,
             filter_spec=filter_spec,
-            excluded_ids=excluded_target_ids,
+            excluded_ids=normalized_excluded_ids,
         )
         target = _random_row(alternative_targets, rng)
+        alternative_round_reset = False
+        if target is None and normalized_excluded_ids:
+            target = select_target(alternative_kind, normalized_excluded_ids[-1:])
+            if target is None:
+                target = select_target(alternative_kind, ())
+            alternative_round_reset = target is not None
         if target is None:
             raise
+        round_reset = round_reset or alternative_round_reset
         kind = alternative_kind
         distractors = _select_distractors(
             user=user,
@@ -403,7 +493,7 @@ def generate_question(
     option_ids = [item.pk for item in option_items]
     token = signing.dumps(
         {
-            "v": 3,
+            "v": 4,
             "target": target.pk,
             "options": option_ids,
             "pool": pool,
@@ -411,6 +501,7 @@ def generate_question(
             "kind": kind,
             "movies": list(normalized_movie_ids),
             "filters": filter_spec.as_payload() if filter_spec is not None else None,
+            "run": normalized_run_id,
             "nonce": secrets.token_urlsafe(8),
         },
         salt=QUESTION_SALT,
@@ -435,6 +526,8 @@ def generate_question(
         filter_spec=filter_spec,
         scope_token=scope_token,
         is_saved=bool(target.is_saved_for_user),
+        run_id=normalized_run_id,
+        round_reset=round_reset,
     )
 
 
@@ -459,13 +552,14 @@ def question_from_token(*, user, token):
         kind = payload.get("kind", DEFINITION_MODE)
         movie_ids = payload.get("movies", [])
         filters_payload = payload.get("filters")
+        run_id = payload.get("run")
     except (KeyError, TypeError) as exc:
         raise QuizTokenError("This question is invalid. Load a new one to continue.") from exc
 
     valid_scalars = (
         isinstance(version, int)
         and not isinstance(version, bool)
-        and version in (1, 2, 3)
+        and version in (1, 2, 3, 4)
         and isinstance(target_id, int)
         and not isinstance(target_id, bool)
         and pool in QUIZ_POOLS
@@ -484,6 +578,18 @@ def question_from_token(*, user, token):
             for value in movie_ids
         )
         and len(set(movie_ids)) == len(movie_ids)
+        and (
+            (
+                version == 4
+                and isinstance(run_id, str)
+                and 16 <= len(run_id) <= 64
+                and all(
+                    character.isalnum() or character in "-_"
+                    for character in run_id
+                )
+            )
+            or (version in (1, 2, 3) and run_id is None)
+        )
     )
     valid_options = (
         len(option_ids) == 5
@@ -509,7 +615,7 @@ def question_from_token(*, user, token):
 
     valid_scope = (
         pool == TARGETED_POOL
-        and version in (2, 3)
+        and version in (2, 3, 4)
         and mode != MIXED_MODE
         and not normalized_movie_ids
         and filter_spec is not None
@@ -564,14 +670,19 @@ def question_from_token(*, user, token):
         filter_spec=filter_spec,
         scope_token=scope_token,
         is_saved=bool(target.is_saved_for_user),
+        run_id=run_id,
     )
 
 
-def skip_question(*, user, token, expected_pool=None):
+def skip_question(*, user, token, expected_pool=None, excluded_target_ids=()):
     """Return another question in the same signed scope without changing progress."""
     current = question_from_token(user=user, token=token)
     if expected_pool is not None and current.pool != expected_pool:
         raise QuizTokenError("This question belongs to a different practice pool.")
+    history = list(_normalise_excluded_target_ids(excluded_target_ids))
+    if current.target.pk in history:
+        history.remove(current.target.pk)
+    history.append(current.target.pk)
     return generate_question(
         user=user,
         pool=current.pool,
@@ -579,7 +690,8 @@ def skip_question(*, user, token, expected_pool=None):
         movie_ids=current.movie_ids,
         filter_spec=current.filter_spec,
         scope_token=current.scope_token,
-        excluded_target_ids=(current.target.pk,),
+        excluded_target_ids=history,
+        run_id=current.run_id,
     )
 
 

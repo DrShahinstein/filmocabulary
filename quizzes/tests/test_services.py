@@ -217,6 +217,86 @@ class QuizEngineTests(TestCase):
         self.assertNotEqual(following.target, current.target)
         self.assertFalse(UserWordStatus.objects.filter(user=self.user).exists())
 
+    def test_random_round_visits_every_target_before_starting_again(self):
+        current = generate_question(
+            user=self.user,
+            target=self.verbs[0],
+            rng=random.Random(2),
+        )
+        run_id = current.run_id
+        history = [current.target.pk]
+
+        for _ in range(len([*self.verbs, *self.nouns]) - 1):
+            current = skip_question(
+                user=self.user,
+                token=current.token,
+                excluded_target_ids=history,
+            )
+            self.assertNotIn(current.target.pk, history)
+            self.assertEqual(current.run_id, run_id)
+            history.append(current.target.pk)
+
+        self.assertEqual(len(set(history)), len([*self.verbs, *self.nouns]))
+
+        previous_target_id = current.target.pk
+        current = skip_question(
+            user=self.user,
+            token=current.token,
+            excluded_target_ids=history,
+        )
+
+        self.assertTrue(current.round_reset)
+        self.assertNotEqual(current.target.pk, previous_target_id)
+        self.assertIn(current.target.pk, history)
+
+    def test_seen_spelling_is_not_repeated_from_another_movie(self):
+        scoped_movie = make_movie(self.user, "Duplicate Terms", 2026)
+        first = make_vocabulary(
+            scoped_movie,
+            word="repeat this",
+            definition="Cycle scope original.",
+        )
+        make_vocabulary(
+            scoped_movie,
+            word="  REPEAT THIS  ",
+            definition="Cycle scope duplicate.",
+        )
+        alternative = make_vocabulary(
+            scoped_movie,
+            word="different term",
+            definition="Cycle scope alternative.",
+        )
+        filter_spec = VocabularyFilterSpec(q="Cycle scope")
+
+        question = generate_question(
+            user=self.user,
+            pool=TARGETED_POOL,
+            mode=DEFINITION_MODE,
+            target=first,
+            filter_spec=filter_spec,
+        )
+        following = generate_question(
+            user=self.user,
+            pool=TARGETED_POOL,
+            mode=DEFINITION_MODE,
+            filter_spec=filter_spec,
+            excluded_target_ids=(first.pk,),
+            run_id=question.run_id,
+            rng=random.Random(1),
+        )
+
+        self.assertEqual(following.target, alternative)
+
+    def test_separate_launches_use_independent_signed_run_ids(self):
+        first = generate_question(user=self.user)
+        second = generate_question(user=self.user)
+
+        self.assertNotEqual(first.run_id, second.run_id)
+        self.assertEqual(
+            question_from_token(user=self.user, token=first.token).run_id,
+            first.run_id,
+        )
+
 
 class ClozeQuizTests(TestCase):
     def setUp(self):
